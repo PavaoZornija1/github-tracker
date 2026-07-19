@@ -151,8 +151,8 @@ CLAUDE.md
 
 **Commit:** `feat: add OpenAPI via swaggo and Swagger UI`
 
-- [ ] Annotations on handlers
-- [ ] Generated docs + `/swagger/*`
+- [x] Annotations on handlers
+- [x] Generated docs + `/swagger/*`
 
 ---
 
