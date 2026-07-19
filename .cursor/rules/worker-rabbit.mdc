@@ -1,0 +1,14 @@
+---
+description: RabbitMQ worker delivery and idempotency rules
+globs: internal/queue/**/*.go,cmd/worker/**/*.go,internal/service/**/*refresh*
+alwaysApply: false
+---
+
+# Worker and RabbitMQ
+
+- Redis is not the queue — jobs go through RabbitMQ
+- Manual ack only after DB reflects terminal job state (or safe retry path)
+- Max 5 jobs in flight; max 3 attempts on transient failures with backoff + jitter
+- Permanent failures → DLQ with reason; update batch job row accordingly
+- Idempotent processing: duplicate delivery must not double-count batch success/failure
+- SIGTERM: stop consuming, finish or requeue in-flight, no lost messages

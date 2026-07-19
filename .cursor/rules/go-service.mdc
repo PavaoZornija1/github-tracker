@@ -1,0 +1,14 @@
+---
+description: Core Go service conventions for github-tracker
+alwaysApply: true
+---
+
+# Go service conventions
+
+- Module: `github.com/PavaoZornija1/github-tracker`
+- Binaries only under `cmd/api` and `cmd/worker`; shared code under `internal/`
+- Plumb `context.Context` from handlers/workers to DB, Redis, Rabbit, and GitHub HTTP
+- Use `slog` with request-id (HTTP) or job-id (worker) from context on every log line
+- API errors: `{ "error": { "code": "...", "message": "..." } }` with correct status codes
+- No inline imports — all imports at package top
+- Exhaustive `switch` on enums/unions with `default` assigning to `never`-equivalent (`default: return fmt.Errorf("unhandled %v", x)`)
