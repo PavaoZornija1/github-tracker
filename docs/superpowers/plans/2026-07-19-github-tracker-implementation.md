@@ -109,9 +109,9 @@ CLAUDE.md
 
 **Commit:** `feat: add error envelope, request-id middleware, and slog helpers`
 
-- [ ] Standard error type + Gin renderer
-- [ ] Request ID middleware + context helpers
-- [ ] Job ID context helpers for worker
+- [x] Standard error type + Gin renderer
+- [x] Request ID middleware + context helpers
+- [x] Job ID context helpers for worker
 
 ---
 
