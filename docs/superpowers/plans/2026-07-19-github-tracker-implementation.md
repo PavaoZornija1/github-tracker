@@ -57,10 +57,10 @@ CLAUDE.md
 
 **Commit:** `chore: initialize Go module and project layout`
 
-- [ ] `go mod init github.com/PavaoZornija1/github-tracker`
-- [ ] Scaffold empty dirs with `.gitkeep` where needed: `cmd/api`, `cmd/worker`, `internal/...`, `ent/schema`
-- [ ] Expand `.gitignore` (binaries, `.env`, IDE, Ent artifacts as needed)
-- [ ] `.env.example` with all config knobs
+- [x] `go mod init github.com/PavaoZornija1/github-tracker`
+- [x] Scaffold empty dirs with `.gitkeep` where needed: `cmd/api`, `cmd/worker`, `internal/...`, `ent/schema`
+- [x] Expand `.gitignore` (binaries, `.env`, IDE, Ent artifacts as needed)
+- [x] `.env.example` with all config knobs
 
 ---
 
@@ -68,8 +68,8 @@ CLAUDE.md
 
 **Commit:** `chore: add docker-compose for Postgres, Redis, and RabbitMQ`
 
-- [ ] `docker-compose.yml`: postgres, redis, rabbitmq:management, volumes, healthchecks
-- [ ] App/worker services can be added later once binaries exist (or stub placeholders)
+- [x] `docker-compose.yml`: postgres, redis, rabbitmq:management, volumes, healthchecks
+- [x] App/worker services can be added later once binaries exist (or stub placeholders)
 
 ---
 
@@ -77,9 +77,9 @@ CLAUDE.md
 
 **Commit:** `docs: add AGENTS.md, CLAUDE.md, and Cursor rules`
 
-- [ ] `AGENTS.md` — stack, invariants, validate-AI checklist
-- [ ] `CLAUDE.md` — aligned short copy of north star
-- [ ] `.cursor/rules/` — go-service, github-cache, worker-rabbit (concise)
+- [x] `AGENTS.md` — stack, invariants, validate-AI checklist
+- [x] `CLAUDE.md` — aligned short copy of north star
+- [x] `.cursor/rules/` — go-service, github-cache, worker-rabbit (concise)
 
 ---
 
@@ -87,10 +87,10 @@ CLAUDE.md
 
 **Commit:** `feat: add config loading and api/worker entrypoint stubs`
 
-- [ ] `internal/config` from env
-- [ ] `cmd/api` and `cmd/worker` start, log config (redacted), wait on SIGTERM
-- [ ] `Makefile` targets: `run-api`, `run-worker`, `compose-up`, `test`, `swag`
-- [ ] README: how to run Compose + binaries
+- [x] `internal/config` from env
+- [x] `cmd/api` and `cmd/worker` start, log config (redacted), wait on SIGTERM
+- [x] `Makefile` targets: `run-api`, `run-worker`, `compose-up`, `test`, `swag`
+- [x] README: how to run Compose + binaries
 
 ---
 
