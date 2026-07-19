@@ -10,6 +10,7 @@ Design and plan:
 
 - [Architecture design](docs/superpowers/specs/2026-07-19-github-tracker-design.md)
 - [Implementation plan](docs/superpowers/plans/2026-07-19-github-tracker-implementation.md)
+- [Retrospective & improvement backlog](docs/superpowers/specs/2026-07-20-retrospective-improvements.md)
 - Agent brief: [AGENTS.md](AGENTS.md)
 
 ## Stack
