@@ -1,4 +1,4 @@
-.PHONY: help compose-up compose-down run-api run-worker test swag tidy fmt
+.PHONY: help compose-up compose-down run-api run-worker test generate swag tidy fmt
 
 help:
 	@echo "Targets:"
@@ -7,6 +7,7 @@ help:
 	@echo "  run-api       Run API binary (requires DATABASE_URL)"
 	@echo "  run-worker    Run worker binary"
 	@echo "  test          Run unit tests"
+	@echo "  generate      Regenerate Ent client"
 	@echo "  swag          Regenerate OpenAPI (once handlers exist)"
 	@echo "  tidy          go mod tidy"
 	@echo "  fmt           go fmt ./..."
@@ -27,6 +28,9 @@ run-worker:
 
 test:
 	go test ./...
+
+generate:
+	go generate ./ent
 
 swag:
 	@echo "swag init will be wired after HTTP handlers land"

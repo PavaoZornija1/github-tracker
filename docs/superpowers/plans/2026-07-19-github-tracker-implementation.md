@@ -98,9 +98,10 @@ CLAUDE.md
 
 **Commit:** `feat: add Ent schemas for repositories and refresh batches`
 
-- [ ] Schemas for Repository, RefreshBatch, RefreshBatchJob
-- [ ] `go generate` / ent generate
-- [ ] Migration strategy documented (Ent migrate on startup for dev is OK; note trade-off)
+- [x] Schemas for Repository, RefreshBatch, RefreshBatchJob
+- [x] `go generate` / ent generate
+- [x] Migration strategy documented (Ent migrate on startup for dev is OK; note trade-off)
+- [x] Schema smoke test (unique batch+repo job constraint)
 
 ---
 
