@@ -1,0 +1,454 @@
+basePath: /api
+definitions:
+  github_com_PavaoZornija1_github-tracker_internal_apierror.Detail:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope:
+    properties:
+      error:
+        $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Detail'
+    type: object
+  github_com_PavaoZornija1_github-tracker_internal_service.BatchFailedItem:
+    properties:
+      reason:
+        type: string
+      repo_id:
+        format: uuid
+        type: string
+    type: object
+  github_com_PavaoZornija1_github-tracker_internal_service.BatchStatus:
+    properties:
+      failed:
+        items:
+          $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.BatchFailedItem'
+        type: array
+      pending:
+        type: integer
+      succeeded:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_PavaoZornija1_github-tracker_internal_service.ChangesResult:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.RepoDTO'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_PavaoZornija1_github-tracker_internal_service.ListResult:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.RepoDTO'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  github_com_PavaoZornija1_github-tracker_internal_service.RefreshAllAccepted:
+    properties:
+      batch_id:
+        format: uuid
+        type: string
+    type: object
+  github_com_PavaoZornija1_github-tracker_internal_service.RepoDTO:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      fetched_at:
+        type: string
+      full_name:
+        type: string
+      html_url:
+        type: string
+      id:
+        format: uuid
+        type: string
+      language:
+        type: string
+      name:
+        type: string
+      notes:
+        type: string
+      owner:
+        type: string
+      stars:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  github_com_PavaoZornija1_github-tracker_internal_service.Stats:
+    properties:
+      top_language:
+        type: string
+      total:
+        type: integer
+      total_stars:
+        type: integer
+    type: object
+  internal_httpapi.CreateRepoRequest:
+    properties:
+      name:
+        example: go
+        type: string
+      owner:
+        example: golang
+        type: string
+    type: object
+  internal_httpapi.PatchNotesRequest:
+    properties:
+      notes:
+        example: interesting concurrency primitives
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Tracks GitHub repositories. No end-user auth. GITHUB_TOKEN is optional
+    server-side config only.
+  title: GitHub Tracker API
+  version: "1.0"
+paths:
+  /batches/{id}:
+    get:
+      parameters:
+      - description: Batch ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.BatchStatus'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Get batch status
+      tags:
+      - batches
+  /repos:
+    get:
+      description: Cursor-paginated list with optional language filter and sort.
+      parameters:
+      - description: Filter by language
+        in: query
+        name: language
+        type: string
+      - description: Sort order
+        enum:
+        - updated_desc
+        - stars_desc
+        in: query
+        name: sort
+        type: string
+      - description: Opaque pagination cursor
+        in: query
+        name: cursor
+        type: string
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.ListResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: List repositories
+      tags:
+      - repos
+    post:
+      consumes:
+      - application/json
+      description: Fetch metadata from GitHub and add the repository to the watchlist.
+      parameters:
+      - description: Repository owner and name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_httpapi.CreateRepoRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.RepoDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Create repository
+      tags:
+      - repos
+  /repos/{id}:
+    delete:
+      parameters:
+      - description: Repository ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Delete repository
+      tags:
+      - repos
+    get:
+      parameters:
+      - description: Repository ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.RepoDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Get repository
+      tags:
+      - repos
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Repository ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Notes payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_httpapi.PatchNotesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.RepoDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Update repository notes
+      tags:
+      - repos
+  /repos/{id}/refresh:
+    post:
+      description: Invalidate cache and re-fetch stars, language, description from
+        GitHub.
+      parameters:
+      - description: Repository ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.RepoDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Refresh repository
+      tags:
+      - repos
+  /repos/changes:
+    get:
+      description: Poll repositories with updated_at greater than the since cursor
+        (duplicates OK).
+      parameters:
+      - description: Opaque changes cursor
+        in: query
+        name: since
+        type: string
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.ChangesResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Repository changes
+      tags:
+      - repos
+  /repos/refresh-all:
+    post:
+      description: Create a batch and enqueue one async refresh job per repo. Returns
+        202 immediately.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.RefreshAllAccepted'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Refresh all repositories
+      tags:
+      - batches
+  /repos/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_service.Stats'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Repository stats
+      tags:
+      - repos
+swagger: "2.0"
