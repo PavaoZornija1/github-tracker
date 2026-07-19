@@ -158,14 +158,13 @@ CLAUDE.md
 
 ### Task 12: Harden tests + README trade-offs
 
-**Commit:** `test: expand coverage and document architecture trade-offs`
+**Commits:** `test: cover batch status aggregation and changes cursor` · README/docs polish
 
-- [ ] Remaining tests from design
-- [ ] README: runbook, trade-offs, AI workflow
+- [x] Remaining tests from design (batch status aggregation, changes cursor no-gap, GitHub error mapping)
+- [x] README: runbook, trade-offs, AI workflow
 
 ---
 
 ## Progress
 
-Tasks 1–5 = scaffolding phase (current).  
-Tasks 6–12 = domain implementation.
+Tasks 1–12 complete.
