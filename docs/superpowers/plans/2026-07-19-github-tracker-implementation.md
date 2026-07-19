@@ -130,8 +130,9 @@ CLAUDE.md
 
 **Commit:** `feat: implement repo CRUD API with concurrent-safe create`
 
-- [ ] Services + Gin routes for CRUD, sync refresh, stats, changes, list cursor
-- [ ] Integration test: concurrent POST → 409
+- [x] Services + Gin routes for CRUD, sync refresh, stats, changes, list cursor
+- [x] Integration test: concurrent POST → 409
+- [x] Wire `cmd/api` with Postgres, Redis cache, graceful HTTP shutdown
 
 ---
 

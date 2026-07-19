@@ -4,7 +4,10 @@ Production-shaped Go service that tracks GitHub repositories.
 
 ## Status
 
-Scaffolding in progress. Design and plan:
+Core watchlist API is implemented (CRUD, sync refresh, stats, changes, cursor list).
+Async refresh-all + worker + Swagger are next.
+
+Design and plan:
 
 - [Architecture design](docs/superpowers/specs/2026-07-19-github-tracker-design.md)
 - [Implementation plan](docs/superpowers/plans/2026-07-19-github-tracker-implementation.md)
@@ -14,26 +17,30 @@ Scaffolding in progress. Design and plan:
 
 | Piece | Choice |
 |-------|--------|
-| HTTP | Gin (wired next) |
+| HTTP | Gin |
 | ORM | Ent + PostgreSQL |
 | Cache / locks | Redis |
-| Job queue | RabbitMQ (+ DLQ) |
+| Job queue | RabbitMQ (+ DLQ) — worker next |
 | Binaries | `cmd/api`, `cmd/worker` |
 
-## Quick start (infra)
+## Quick start
 
 ```bash
 cp .env.example .env
 docker compose up -d
-# Postgres :5432, Redis :6379, RabbitMQ :5672, management UI :15672 (guest/guest)
+set -a && source .env && set +a
+make run-api
 ```
 
-Load env (example):
+Useful checks:
 
 ```bash
-set -a && source .env && set +a
-make run-api      # waits on SIGTERM until HTTP is wired
-make run-worker   # same for consumer
+curl -s localhost:8080/healthz
+curl -s -X POST localhost:8080/api/repos -H 'content-type: application/json' \
+  -d '{"owner":"golang","name":"go"}'
+```
+
+```bash
 make test
 ```
 
@@ -42,6 +49,5 @@ make test
 - **RabbitMQ for jobs, Redis for cache** — durable work must not share eviction policy with disposable cache.
 - **Two binaries** — scale and shut down API vs worker independently; shared `internal/` code.
 - **Cursor pagination** and **at-least-once `/changes`** — see design doc.
+- **Concurrent create** — UNIQUE `full_name` + mapped constraint errors → HTTP 409.
 - **AI workflow** — use Cursor/Claude aggressively; validate concurrency, retries, and shutdown by hand (`AGENTS.md`).
-
-Full trade-off write-up will expand as features land.

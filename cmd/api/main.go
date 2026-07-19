@@ -2,12 +2,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/PavaoZornija1/github-tracker/internal/cache"
 	"github.com/PavaoZornija1/github-tracker/internal/config"
+	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
+	"github.com/PavaoZornija1/github-tracker/internal/httpapi"
+	"github.com/PavaoZornija1/github-tracker/internal/platform/db"
+	"github.com/PavaoZornija1/github-tracker/internal/platform/logging"
+	"github.com/PavaoZornija1/github-tracker/internal/platform/redisx"
+	"github.com/PavaoZornija1/github-tracker/internal/service"
 )
 
 func main() {
@@ -17,24 +27,71 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: parseLogLevel(cfg.LogLevel),
-	}))
+	logger := logging.NewJSON(parseLogLevel(cfg.LogLevel))
 	slog.SetDefault(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	slog.Info("api starting",
-		"addr", cfg.HTTPAddr,
-		"redis_configured", cfg.RedisURL != "",
-		"rabbitmq_queue", cfg.RabbitMQQueue,
-		"github_token_set", cfg.GitHubToken != "",
-	)
+	entClient, err := db.OpenPostgres(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("open database", "err", err)
+		os.Exit(1)
+	}
+	defer entClient.Close()
 
-	// HTTP server wiring lands in a later commit.
-	<-ctx.Done()
-	slog.Info("api shutting down", "reason", ctx.Err())
+	rdb, err := redisx.Connect(ctx, cfg.RedisURL)
+	if err != nil {
+		logger.Error("open redis", "err", err)
+		os.Exit(1)
+	}
+	defer rdb.Close()
+
+	gh := githubclient.New(githubclient.Options{
+		BaseURL: cfg.GitHubAPIBaseURL,
+		Token:   cfg.GitHubToken,
+		Timeout: cfg.GitHubHTTPTimeout,
+	})
+	ghCache := cache.NewGitHubCache(rdb, gh, cache.GitHubCacheOptions{
+		TTL:     cfg.GitHubCacheTTL,
+		LockTTL: cfg.GitHubFetchLockTTL,
+	})
+	repoSvc := service.NewRepoService(entClient, ghCache)
+
+	engine := httpapi.NewRouter(httpapi.RouterDeps{
+		Repos:    repoSvc,
+		Logger: logger,
+	})
+
+	srv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           engine,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("api listening",
+			"addr", cfg.HTTPAddr,
+			"github_token_set", cfg.GitHubToken != "",
+		)
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		logger.Info("api shutting down", "reason", ctx.Err())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("api shutdown", "err", err)
+		}
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("api server failed", "err", err)
+			os.Exit(1)
+		}
+	}
 }
 
 func parseLogLevel(level string) slog.Level {
