@@ -17,6 +17,7 @@ import (
 	"github.com/PavaoZornija1/github-tracker/internal/platform/db"
 	"github.com/PavaoZornija1/github-tracker/internal/platform/logging"
 	"github.com/PavaoZornija1/github-tracker/internal/platform/redisx"
+	"github.com/PavaoZornija1/github-tracker/internal/queue"
 	"github.com/PavaoZornija1/github-tracker/internal/service"
 )
 
@@ -47,6 +48,19 @@ func main() {
 	}
 	defer rdb.Close()
 
+	mq, err := queue.Connect(queue.Config{
+		URL:      cfg.RabbitMQURL,
+		Exchange: cfg.RabbitMQExchange,
+		Queue:    cfg.RabbitMQQueue,
+		DLX:      cfg.RabbitMQDLX,
+		DLQ:      cfg.RabbitMQDLQ,
+	})
+	if err != nil {
+		logger.Error("open rabbitmq", "err", err)
+		os.Exit(1)
+	}
+	defer mq.Close()
+
 	gh := githubclient.New(githubclient.Options{
 		BaseURL: cfg.GitHubAPIBaseURL,
 		Token:   cfg.GitHubToken,
@@ -57,10 +71,12 @@ func main() {
 		LockTTL: cfg.GitHubFetchLockTTL,
 	})
 	repoSvc := service.NewRepoService(entClient, ghCache)
+	batchSvc := service.NewBatchService(entClient, repoSvc, queue.NewPublisher(mq), rdb, cfg.WorkerMaxRetries)
 
 	engine := httpapi.NewRouter(httpapi.RouterDeps{
-		Repos:    repoSvc,
-		Logger: logger,
+		Repos:     repoSvc,
+		Batches: batchSvc,
+		Logger:  logger,
 	})
 
 	srv := &http.Server{

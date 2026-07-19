@@ -140,10 +140,10 @@ CLAUDE.md
 
 **Commit:** `feat: add RabbitMQ refresh queue and batch endpoints`
 
-- [ ] Declare topology (queue, DLX, DLQ)
-- [ ] refresh-all → 202 + batch_id
-- [ ] GET batch status
-- [ ] Worker consumer concurrency 5, idempotent processing, retries
+- [x] Declare topology (queue, DLX, DLQ)
+- [x] refresh-all → 202 + batch_id
+- [x] GET batch status
+- [x] Worker consumer concurrency 5, idempotent processing, retries
 
 ---
 

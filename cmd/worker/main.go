@@ -7,7 +7,15 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/PavaoZornija1/github-tracker/internal/cache"
 	"github.com/PavaoZornija1/github-tracker/internal/config"
+	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
+	"github.com/PavaoZornija1/github-tracker/internal/platform/db"
+	"github.com/PavaoZornija1/github-tracker/internal/platform/logging"
+	"github.com/PavaoZornija1/github-tracker/internal/platform/redisx"
+	"github.com/PavaoZornija1/github-tracker/internal/platform/requestid"
+	"github.com/PavaoZornija1/github-tracker/internal/queue"
+	"github.com/PavaoZornija1/github-tracker/internal/service"
 )
 
 func main() {
@@ -17,25 +25,78 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: parseLogLevel(cfg.LogLevel),
-	}))
+	logger := logging.NewJSON(parseLogLevel(cfg.LogLevel))
 	slog.SetDefault(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	slog.Info("worker starting",
+	entClient, err := db.OpenPostgres(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("open database", "err", err)
+		os.Exit(1)
+	}
+	defer entClient.Close()
+
+	rdb, err := redisx.Connect(ctx, cfg.RedisURL)
+	if err != nil {
+		logger.Error("open redis", "err", err)
+		os.Exit(1)
+	}
+	defer rdb.Close()
+
+	mq, err := queue.Connect(queue.Config{
+		URL:      cfg.RabbitMQURL,
+		Exchange: cfg.RabbitMQExchange,
+		Queue:    cfg.RabbitMQQueue,
+		DLX:      cfg.RabbitMQDLX,
+		DLQ:      cfg.RabbitMQDLQ,
+	})
+	if err != nil {
+		logger.Error("open rabbitmq", "err", err)
+		os.Exit(1)
+	}
+	defer mq.Close()
+
+	gh := githubclient.New(githubclient.Options{
+		BaseURL: cfg.GitHubAPIBaseURL,
+		Token:   cfg.GitHubToken,
+		Timeout: cfg.GitHubHTTPTimeout,
+	})
+	ghCache := cache.NewGitHubCache(rdb, gh, cache.GitHubCacheOptions{
+		TTL:     cfg.GitHubCacheTTL,
+		LockTTL: cfg.GitHubFetchLockTTL,
+	})
+	repoSvc := service.NewRepoService(entClient, ghCache)
+	batchSvc := service.NewBatchService(entClient, repoSvc, queue.NewPublisher(mq), rdb, cfg.WorkerMaxRetries)
+
+	consumer := queue.NewConsumer(mq, queue.ConsumerOptions{
+		Concurrency: cfg.WorkerConcurrency,
+		MaxRetries:  cfg.WorkerMaxRetries,
+		Handler: func(ctx context.Context, job queue.RefreshJob, attempt int) error {
+			ctx = requestid.WithJobID(ctx, job.JobID.String())
+			log := logging.FromContext(ctx, logger)
+			log.Info("processing refresh job", "batch_id", job.BatchID, "repo_id", job.RepoID, "attempt", attempt)
+			err := batchSvc.ProcessRefreshJob(ctx, job, attempt)
+			if err != nil {
+				log.Info("refresh job outcome", "err", err, "attempt", attempt)
+			}
+			return err
+		},
+	})
+
+	logger.Info("worker starting",
 		"concurrency", cfg.WorkerConcurrency,
 		"max_retries", cfg.WorkerMaxRetries,
-		"rabbitmq_queue", cfg.RabbitMQQueue,
-		"rabbitmq_dlq", cfg.RabbitMQDLQ,
-		"github_token_set", cfg.GitHubToken != "",
+		"queue", cfg.RabbitMQQueue,
+		"dlq", cfg.RabbitMQDLQ,
 	)
 
-	// RabbitMQ consumer wiring lands in a later commit.
-	<-ctx.Done()
-	slog.Info("worker shutting down", "reason", ctx.Err())
+	if err := consumer.Run(ctx); err != nil {
+		logger.Error("worker stopped", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("worker shut down cleanly")
 }
 
 func parseLogLevel(level string) slog.Level {
