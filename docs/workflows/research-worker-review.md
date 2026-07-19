@@ -1,0 +1,57 @@
+# Research → Worker → Review
+
+This is how we want agents to ship non-trivial work on this project (and how you should think about agentic coding long-term).
+
+## Why three lanes?
+
+One model doing research + coding + self-review in a single pass tends to:
+
+1. **Skip evidence** — invent APIs that “should” exist  
+2. **Over-scope** — refactor while “just adding Swagger”  
+3. **Self-approve** — miss the bug it just introduced  
+
+Separating roles fixes that the same way engineering teams do:
+
+| Lane | Job | Mindset |
+|------|-----|---------|
+| **Research** | Map reality, choose an approach | Curious, read-only, cite files |
+| **Worker** | Make the smallest correct change | Obedient to the plan, verify with tests |
+| **Review** | Try to break it / find gaps | Skeptical, high bar, no rubber stamp |
+
+You (human) + the orchestrator stay in charge: lanes report; they don’t silently redefine the product.
+
+## What “good” looks like
+
+```text
+You: “Add X with the same flow.”
+
+Orchestrator:
+  1. Spawns Research → returns plan + pitfalls + acceptance checks
+  2. Spawns Worker with that plan → commits + test evidence
+  3. Spawns Review on those commits → only real issues
+  4. Fixes Critical/Important if any; ships with a short summary
+```
+
+## Teaching notes (for you)
+
+- **Research quality** determines worker quality. Bad research → wrong abstraction → expensive rework.  
+- **Worker** should be boring: follow the plan, small commits, run tests. Cleverness belongs in research trade-offs.  
+- **Review** is not “say something nice.” Ask: *What would fail at 2am?* For this service: duplicate POST, double-ack, lost jobs, hammering GitHub after 429.  
+- **When to skip lanes:** typo fixes, one-line renames, pure questions. Not for queues, caches, or anything in `AGENTS.md` invariants.
+
+## Where this is encoded
+
+| Artifact | Role |
+|----------|------|
+| `~/.cursor/skills/research-worker-review/SKILL.md` | Personal skill (all projects) |
+| `.cursor/skills/research-worker-review/SKILL.md` | Project skill (this repo) |
+| `AGENTS.md` | Short pointer + repo invariants |
+| This file | Human teaching / onboarding |
+
+## Trigger phrases
+
+Agents should apply this when you say things like:
+
+- “same flow”  
+- “research, worker, review”  
+- “three-lane” / “agentic best practice”

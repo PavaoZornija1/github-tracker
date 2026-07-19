@@ -6,6 +6,16 @@ Production-shaped Go service that tracks GitHub repositories (Gin + Ent + Postgr
 
 Read `docs/superpowers/specs/2026-07-19-github-tracker-design.md` before large changes.
 
+## How we work (agentic)
+
+**Default for non-trivial tasks:** Research → Worker → Review.
+
+- Skill: `.cursor/skills/research-worker-review/SKILL.md`
+- Human explainer: `docs/workflows/research-worker-review.md`
+- Personal Cursor skill (all repos): `research-worker-review`
+
+Trivial one-liners can be inline. Anything touching invariants below gets the three lanes.
+
 ## Stack
 
 - Go 1.22+, Gin, Ent, PostgreSQL

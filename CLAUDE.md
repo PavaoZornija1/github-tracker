@@ -6,6 +6,11 @@ North star for Claude and other coding agents. Prefer `AGENTS.md` as the full br
 
 GitHub repo tracker API + worker: **Gin, Ent, Postgres, Redis (cache only), RabbitMQ (jobs).**
 
+## Agentic default
+
+**Research → Worker → Review** for non-trivial work.  
+See `.cursor/skills/research-worker-review/SKILL.md` and `docs/workflows/research-worker-review.md`.
+
 ## Non-negotiables
 
 - Do **not** use Redis as the job queue.

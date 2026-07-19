@@ -1,0 +1,14 @@
+---
+description: Use Research → Worker → Review for non-trivial work
+alwaysApply: true
+---
+
+# Agentic delivery
+
+For multi-step or production-sensitive changes, run **Research → Worker → Review** (see `.cursor/skills/research-worker-review/SKILL.md` and `docs/workflows/research-worker-review.md`).
+
+- Research is read-only and returns a plan + acceptance checks
+- Worker implements that plan with small commits and tests
+- Review is adversarial; fix Critical/Important before calling the task done
+
+Do not skip Review for concurrency, queue, cache, shutdown, or auth-adjacent changes.
