@@ -119,10 +119,10 @@ CLAUDE.md
 
 **Commit:** `feat: add GitHub client with Redis cache and single-flight lock`
 
-- [ ] Typed error classes
-- [ ] Timeout + context
-- [ ] Cache TTL 5m + SET NX lock
-- [ ] Unit tests for error mapping; single-flight test with mock transport
+- [x] Typed error classes
+- [x] Timeout + context
+- [x] Cache TTL 5m + SET NX lock
+- [x] Unit tests for error mapping; single-flight test with mock transport
 
 ---
 
