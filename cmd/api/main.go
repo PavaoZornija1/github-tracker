@@ -19,8 +19,15 @@ import (
 	"github.com/PavaoZornija1/github-tracker/internal/platform/redisx"
 	"github.com/PavaoZornija1/github-tracker/internal/queue"
 	"github.com/PavaoZornija1/github-tracker/internal/service"
+
+	_ "github.com/PavaoZornija1/github-tracker/docs"
 )
 
+// @title GitHub Tracker API
+// @version 1.0
+// @description Tracks GitHub repositories. No end-user auth. GITHUB_TOKEN is optional server-side config only.
+// @host localhost:8080
+// @BasePath /api
 func main() {
 	cfg, err := config.Load()
 	if err != nil {

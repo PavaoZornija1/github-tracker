@@ -8,7 +8,7 @@ help:
 	@echo "  run-worker    Run worker binary"
 	@echo "  test          Run unit tests"
 	@echo "  generate      Regenerate Ent client"
-	@echo "  swag          Regenerate OpenAPI (once handlers exist)"
+	@echo "  swag          Regenerate OpenAPI docs (docs/docs.go + swagger.{json,yaml})"
 	@echo "  tidy          go mod tidy"
 	@echo "  fmt           go fmt ./..."
 
@@ -33,8 +33,7 @@ generate:
 	go generate ./ent
 
 swag:
-	@echo "swag init will be wired after HTTP handlers land"
-	@exit 1
+	go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/api/main.go -o docs --parseDependency --parseInternal
 
 tidy:
 	go mod tidy

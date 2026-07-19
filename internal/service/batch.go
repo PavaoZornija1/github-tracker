@@ -48,7 +48,7 @@ func NewBatchService(client *ent.Client, repos *RepoService, publisher JobPublis
 
 // RefreshAllAccepted is returned for POST /api/repos/refresh-all.
 type RefreshAllAccepted struct {
-	BatchID uuid.UUID `json:"batch_id"`
+	BatchID uuid.UUID `json:"batch_id" swaggertype:"string" format:"uuid"`
 }
 
 // StartRefreshAll creates a batch, job rows, and enqueues one message per repo.
@@ -101,7 +101,7 @@ type BatchStatus struct {
 
 // BatchFailedItem records one permanently failed repo refresh.
 type BatchFailedItem struct {
-	RepoID uuid.UUID `json:"repo_id"`
+	RepoID uuid.UUID `json:"repo_id" swaggertype:"string" format:"uuid"`
 	Reason string    `json:"reason"`
 }
 

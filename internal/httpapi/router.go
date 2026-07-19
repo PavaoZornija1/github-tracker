@@ -4,15 +4,17 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"github.com/PavaoZornija1/github-tracker/internal/service"
 )
 
 // Dependencies for constructing the HTTP router.
 type RouterDeps struct {
-	Repos      *service.RepoService
-	Batches  *service.BatchService
-	Logger   *slog.Logger
+	Repos     *service.RepoService
+	Batches *service.BatchService
+	Logger  *slog.Logger
 }
 
 // NewRouter builds the Gin engine with middleware and routes.
@@ -42,6 +44,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	return r
 }

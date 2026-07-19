@@ -33,7 +33,7 @@ func NewRepoService(client *ent.Client, github GitHubGateway) *RepoService {
 
 // RepoDTO is the API-facing repository record.
 type RepoDTO struct {
-	ID          uuid.UUID `json:"id"`
+	ID          uuid.UUID `json:"id" swaggertype:"string" format:"uuid"`
 	Owner       string    `json:"owner"`
 	Name        string    `json:"name"`
 	FullName    string    `json:"full_name"`

@@ -24,6 +24,14 @@ func NewBatchHandler(svc *service.BatchService, logger *slog.Logger) *BatchHandl
 	return &BatchHandler{svc: svc, logger: logger}
 }
 
+// RefreshAll enqueues a refresh job for every tracked repository.
+// @Summary Refresh all repositories
+// @Description Create a batch and enqueue one async refresh job per repo. Returns 202 immediately.
+// @Tags batches
+// @Produce json
+// @Success 202 {object} service.RefreshAllAccepted
+// @Failure 500 {object} apierror.Envelope
+// @Router /repos/refresh-all [post]
 func (h *BatchHandler) RefreshAll(c *gin.Context) {
 	res, err := h.svc.StartRefreshAll(c.Request.Context())
 	if err != nil {
@@ -33,6 +41,16 @@ func (h *BatchHandler) RefreshAll(c *gin.Context) {
 	WriteJSON(c, http.StatusAccepted, res)
 }
 
+// GetBatch returns progress for an async refresh batch.
+// @Summary Get batch status
+// @Tags batches
+// @Produce json
+// @Param id path string true "Batch ID" format(uuid)
+// @Success 200 {object} service.BatchStatus
+// @Failure 400 {object} apierror.Envelope
+// @Failure 404 {object} apierror.Envelope
+// @Failure 500 {object} apierror.Envelope
+// @Router /batches/{id} [get]
 func (h *BatchHandler) GetBatch(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
