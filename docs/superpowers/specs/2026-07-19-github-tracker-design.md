@@ -46,7 +46,9 @@ Shared logic lives under `internal/`.
 - Explicit refresh deletes the cache key.
 - Multi-replica safe: lock lives in Redis.
 
-## Data model (Ent minimum)
+## Migration strategy
+
+For local/dev, the API and worker will call Ent schema migrate (`client.Schema.Create`) on startup. That is convenient and acceptable for this service size; production long-term would switch to versioned migrations (Atlas/goose) before multi-instance rolling deploys where auto-migrate races matter.
 
 **Repository:** id, owner, name, full_name (unique), description, stars, language, html_url, notes, fetched_at, created_at, updated_at.
 
