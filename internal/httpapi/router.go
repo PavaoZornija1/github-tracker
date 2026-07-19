@@ -10,8 +10,9 @@ import (
 
 // Dependencies for constructing the HTTP router.
 type RouterDeps struct {
-	Repos    *service.RepoService
-	Logger *slog.Logger
+	Repos      *service.RepoService
+	Batches  *service.BatchService
+	Logger   *slog.Logger
 }
 
 // NewRouter builds the Gin engine with middleware and routes.
@@ -22,17 +23,20 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	r.Use(RequestID())
 
 	h := NewRepoHandler(deps.Repos, deps.Logger)
+	bh := NewBatchHandler(deps.Batches, deps.Logger)
 
 	api := r.Group("/api")
 	{
 		api.GET("/repos/stats", h.Stats)
 		api.GET("/repos/changes", h.Changes)
+		api.POST("/repos/refresh-all", bh.RefreshAll)
 		api.GET("/repos", h.List)
 		api.POST("/repos", h.Create)
 		api.GET("/repos/:id", h.Get)
 		api.PATCH("/repos/:id", h.Patch)
 		api.DELETE("/repos/:id", h.Delete)
 		api.POST("/repos/:id/refresh", h.Refresh)
+		api.GET("/batches/:id", bh.GetBatch)
 	}
 
 	r.GET("/healthz", func(c *gin.Context) {

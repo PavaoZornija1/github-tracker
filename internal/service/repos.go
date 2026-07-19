@@ -248,7 +248,7 @@ func (s *RepoService) Refresh(ctx context.Context, id uuid.UUID) (RepoDTO, error
 	}
 	gh, err := s.github.Get(ctx, existing.Owner, existing.Name)
 	if err != nil {
-		return RepoDTO{}, MapGitHubError(err)
+		return RepoDTO{}, err
 	}
 
 	upd := s.client.Repository.UpdateOneID(id).

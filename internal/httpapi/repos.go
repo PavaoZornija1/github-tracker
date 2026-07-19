@@ -122,7 +122,7 @@ func (h *RepoHandler) Refresh(c *gin.Context) {
 	}
 	dto, err := h.svc.Refresh(c.Request.Context(), id)
 	if err != nil {
-		WriteError(c, h.logger, err)
+		WriteError(c, h.logger, service.MapGitHubError(err))
 		return
 	}
 	WriteJSON(c, http.StatusOK, dto)

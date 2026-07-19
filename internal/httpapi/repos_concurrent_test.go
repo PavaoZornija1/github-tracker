@@ -15,6 +15,7 @@ import (
 	"github.com/PavaoZornija1/github-tracker/internal/ent/enttest"
 	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
 	"github.com/PavaoZornija1/github-tracker/internal/httpapi"
+	"github.com/PavaoZornija1/github-tracker/internal/queue"
 	"github.com/PavaoZornija1/github-tracker/internal/service"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -32,6 +33,12 @@ func (s *stubGitHub) Invalidate(ctx context.Context, owner, name string) error {
 	return nil
 }
 
+type nopPublisher struct{}
+
+func (nopPublisher) PublishRefresh(ctx context.Context, job queue.RefreshJob) error {
+	return nil
+}
+
 func TestConcurrentPOSTCreateConflict(t *testing.T) {
 	client := enttest.Open(t, "sqlite3", "file:httpconcurrent?mode=memory&cache=shared&_fk=1")
 	defer client.Close()
@@ -46,9 +53,11 @@ func TestConcurrentPOSTCreateConflict(t *testing.T) {
 			FetchedAt: time.Now().UTC(),
 		},
 	})
+	batches := service.NewBatchService(client, svc, nopPublisher{}, nil, 3)
 	engine := httpapi.NewRouter(httpapi.RouterDeps{
-		Repos:    svc,
-		Logger: slog.Default(),
+		Repos:     svc,
+		Batches: batches,
+		Logger:  slog.Default(),
 	})
 
 	const n = 12
