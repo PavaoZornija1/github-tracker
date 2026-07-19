@@ -35,6 +35,18 @@ func TestMapGitHubError(t *testing.T) {
 			status: http.StatusServiceUnavailable,
 			code:   apierror.CodeUnavailable,
 		},
+		{
+			name:   "unauthorized",
+			err:    &githubclient.Error{Kind: githubclient.KindUnauthorized, Message: "bad token"},
+			status: http.StatusUnauthorized,
+			code:   apierror.CodeUnauthorized,
+		},
+		{
+			name:   "server",
+			err:    &githubclient.Error{Kind: githubclient.KindServer, Message: "upstream 502"},
+			status: http.StatusBadGateway,
+			code:   apierror.CodeBadGateway,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

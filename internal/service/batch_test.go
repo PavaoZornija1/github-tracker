@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PavaoZornija1/github-tracker/ent/schema"
+	"github.com/PavaoZornija1/github-tracker/internal/apierror"
 	"github.com/PavaoZornija1/github-tracker/internal/ent/enttest"
 	"github.com/PavaoZornija1/github-tracker/internal/ent/refreshbatchjob"
 	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
@@ -159,5 +160,91 @@ func TestStartRefreshAllEnqueuesJobs(t *testing.T) {
 	}
 	if status.Total != 1 || status.Pending != 1 {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestGetBatchStatusMixedAggregation(t *testing.T) {
+	client := enttest.Open(t, "sqlite3", "file:batchstatus?mode=memory&cache=shared&_fk=1")
+	defer client.Close()
+
+	ctx := context.Background()
+	mkRepo := func(full string) uuid.UUID {
+		t.Helper()
+		owner, name := "o", full
+		r, err := client.Repository.Create().
+			SetOwner(owner).
+			SetName(name).
+			SetFullName(full).
+			SetHTMLURL("https://github.com/" + full).
+			SetFetchedAt(time.Now().UTC()).
+			Save(ctx)
+		if err != nil {
+			t.Fatalf("create repo %s: %v", full, err)
+		}
+		return r.ID
+	}
+	pendingID := mkRepo("org/pending")
+	okID := mkRepo("org/ok")
+	failID := mkRepo("org/fail")
+
+	batch, err := client.RefreshBatch.Create().Save(ctx)
+	if err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
+	_, err = client.RefreshBatchJob.Create().
+		SetID(uuid.New()).
+		SetBatchID(batch.ID).
+		SetRepoID(pendingID).
+		SetStatus(schema.RefreshJobStatusPending).
+		Save(ctx)
+	if err != nil {
+		t.Fatalf("pending job: %v", err)
+	}
+	_, err = client.RefreshBatchJob.Create().
+		SetID(uuid.New()).
+		SetBatchID(batch.ID).
+		SetRepoID(okID).
+		SetStatus(schema.RefreshJobStatusSucceeded).
+		Save(ctx)
+	if err != nil {
+		t.Fatalf("succeeded job: %v", err)
+	}
+	failReason := "github: not found"
+	_, err = client.RefreshBatchJob.Create().
+		SetID(uuid.New()).
+		SetBatchID(batch.ID).
+		SetRepoID(failID).
+		SetStatus(schema.RefreshJobStatusFailed).
+		SetErrorReason(failReason).
+		Save(ctx)
+	if err != nil {
+		t.Fatalf("failed job: %v", err)
+	}
+
+	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), &memPublisher{}, nil, 3)
+	status, err := batches.GetBatchStatus(ctx, batch.ID)
+	if err != nil {
+		t.Fatalf("GetBatchStatus: %v", err)
+	}
+	if status.Total != 3 || status.Pending != 1 || status.Succeeded != 1 {
+		t.Fatalf("counts = %+v, want total=3 pending=1 succeeded=1", status)
+	}
+	if len(status.Failed) != 1 {
+		t.Fatalf("failed len = %d, want 1", len(status.Failed))
+	}
+	if status.Failed[0].RepoID != failID || status.Failed[0].Reason != failReason {
+		t.Fatalf("failed item = %+v, want repo_id=%s reason=%q", status.Failed[0], failID, failReason)
+	}
+}
+
+func TestGetBatchStatusUnknownBatch(t *testing.T) {
+	client := enttest.Open(t, "sqlite3", "file:batchmissing?mode=memory&cache=shared&_fk=1")
+	defer client.Close()
+
+	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), &memPublisher{}, nil, 3)
+	_, err := batches.GetBatchStatus(context.Background(), uuid.New())
+	ae, ok := apierror.As(err)
+	if !ok || ae.Code != apierror.CodeNotFound {
+		t.Fatalf("err = %v, want not_found", err)
 	}
 }
