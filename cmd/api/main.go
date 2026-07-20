@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -41,7 +42,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	entClient, err := db.OpenPostgres(ctx, cfg.DatabaseURL)
+	entClient, err := db.OpenPostgres(ctx, cfg.DatabaseURL, db.OpenOptions{AutoMigrate: cfg.AutoMigrate()})
 	if err != nil {
 		logger.Error("open database", "err", err)
 		os.Exit(1)
@@ -81,15 +82,26 @@ func main() {
 	batchSvc := service.NewBatchService(entClient, repoSvc, queue.NewPublisher(mq), rdb, cfg.WorkerMaxRetries)
 
 	engine := httpapi.NewRouter(httpapi.RouterDeps{
-		Repos:     repoSvc,
+		Repos:   repoSvc,
 		Batches: batchSvc,
 		Logger:  logger,
+		Ready: func(ctx context.Context) error {
+			if _, err := entClient.Repository.Query().Limit(1).Count(ctx); err != nil {
+				return fmt.Errorf("postgres: %w", err)
+			}
+			if err := rdb.Ping(ctx).Err(); err != nil {
+				return fmt.Errorf("redis: %w", err)
+			}
+			return nil
+		},
 	})
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           engine,
 		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)

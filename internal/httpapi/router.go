@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -12,17 +13,20 @@ import (
 
 // Dependencies for constructing the HTTP router.
 type RouterDeps struct {
-	Repos     *service.RepoService
+	Repos   *service.RepoService
 	Batches *service.BatchService
 	Logger  *slog.Logger
+	Ready   ReadyChecker
 }
 
 // NewRouter builds the Gin engine with middleware and routes.
 func NewRouter(deps RouterDeps) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery())
 	r.Use(RequestID())
+	r.Use(AccessLog(deps.Logger))
+	r.Use(MetricsMiddleware())
+	r.Use(gin.Recovery())
 
 	h := NewRepoHandler(deps.Repos, deps.Logger)
 	bh := NewBatchHandler(deps.Batches, deps.Logger)
@@ -42,9 +46,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		api.POST("/repos/:id/refresh", h.Refresh)
 	}
 
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	r.GET("/healthz", Healthz)
+	r.GET("/readyz", Readyz(deps.Ready))
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	return r
