@@ -19,9 +19,10 @@ import (
 
 const githubRateLimitKey = "github:rate_limit_until"
 
-// JobPublisher enqueues refresh jobs.
+// JobPublisher enqueues refresh jobs and batch kicks.
 type JobPublisher interface {
 	PublishRefresh(ctx context.Context, job queue.RefreshJob) error
+	PublishBatchKick(ctx context.Context, kick queue.BatchKick) error
 }
 
 // BatchService manages refresh batches and idempotent job processing.
@@ -51,7 +52,7 @@ type RefreshAllAccepted struct {
 	BatchID uuid.UUID `json:"batch_id" swaggertype:"string" format:"uuid"`
 }
 
-// StartRefreshAll creates a batch, job rows, and enqueues one message per repo.
+// StartRefreshAll creates a batch, job rows, and publishes one batch-kick message.
 func (s *BatchService) StartRefreshAll(ctx context.Context) (RefreshAllAccepted, error) {
 	ids, err := s.repos.ListAllIDs(ctx)
 	if err != nil {
@@ -66,29 +67,57 @@ func (s *BatchService) StartRefreshAll(ctx context.Context) (RefreshAllAccepted,
 	}
 
 	builders := make([]*ent.RefreshBatchJobCreate, 0, len(ids))
-	jobs := make([]queue.RefreshJob, 0, len(ids))
 	for _, repoID := range ids {
-		jobID := uuid.New()
 		builders = append(builders, s.client.RefreshBatchJob.Create().
-			SetID(jobID).
+			SetID(uuid.New()).
 			SetBatchID(batch.ID).
 			SetRepoID(repoID).
 			SetStatus(schema.RefreshJobStatusPending))
-		jobs = append(jobs, queue.RefreshJob{
-			JobID:   jobID,
-			BatchID: batch.ID,
-			RepoID:  repoID,
-		})
 	}
 	if err := s.client.RefreshBatchJob.CreateBulk(builders...).Exec(ctx); err != nil {
 		return RefreshAllAccepted{}, err
 	}
-	for _, job := range jobs {
-		if err := s.publisher.PublishRefresh(ctx, job); err != nil {
-			return RefreshAllAccepted{}, fmt.Errorf("enqueue refresh job %s: %w", job.JobID, err)
-		}
+	if err := s.publisher.PublishBatchKick(ctx, queue.BatchKick{BatchID: batch.ID}); err != nil {
+		return RefreshAllAccepted{}, apierror.Unavailable("failed to enqueue batch kick; retry via POST /api/batches/:id/enqueue")
 	}
 	return RefreshAllAccepted{BatchID: batch.ID}, nil
+}
+
+// EnqueueBatch republishes a batch kick so the worker can fan out still-pending jobs.
+func (s *BatchService) EnqueueBatch(ctx context.Context, batchID uuid.UUID) error {
+	exists, err := s.client.RefreshBatch.Query().Where(refreshbatch.IDEQ(batchID)).Exist(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return apierror.NotFound("batch not found")
+	}
+	if err := s.publisher.PublishBatchKick(ctx, queue.BatchKick{BatchID: batchID}); err != nil {
+		return apierror.Unavailable("failed to enqueue batch kick")
+	}
+	return nil
+}
+
+// FanOutBatch publishes a refresh message for every still-pending job in the batch.
+// Idempotent under redelivery: already-terminal jobs are skipped; duplicate refresh
+// messages are handled by conditional status updates.
+func (s *BatchService) FanOutBatch(ctx context.Context, batchID uuid.UUID) error {
+	jobs, err := s.client.RefreshBatchJob.Query().
+		Where(
+			refreshbatchjob.BatchIDEQ(batchID),
+			refreshbatchjob.StatusEQ(schema.RefreshJobStatusPending),
+		).
+		All(ctx)
+	if err != nil {
+		return queue.NewTransient(err, time.Second)
+	}
+	for _, j := range jobs {
+		msg := queue.RefreshJob{JobID: j.ID, BatchID: j.BatchID, RepoID: j.RepoID}
+		if err := s.publisher.PublishRefresh(ctx, msg); err != nil {
+			return queue.NewTransient(fmt.Errorf("fan-out job %s: %w", j.ID, err), time.Second)
+		}
+	}
+	return nil
 }
 
 // BatchStatus is the pollable batch progress payload.

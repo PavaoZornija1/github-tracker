@@ -83,6 +83,12 @@ func main() {
 			}
 			return err
 		},
+		KickHandler: func(ctx context.Context, kick queue.BatchKick) error {
+			ctx = requestid.WithJobID(ctx, kick.BatchID.String())
+			log := logging.FromContext(ctx, logger)
+			log.Info("fan-out batch kick", "batch_id", kick.BatchID)
+			return batchSvc.FanOutBatch(ctx, kick.BatchID)
+		},
 	})
 
 	logger.Info("worker starting",

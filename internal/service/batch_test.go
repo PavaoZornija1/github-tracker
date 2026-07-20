@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -19,14 +20,29 @@ import (
 )
 
 type memPublisher struct {
-	mu   sync.Mutex
-	jobs []queue.RefreshJob
+	mu    sync.Mutex
+	jobs  []queue.RefreshJob
+	kicks []queue.BatchKick
+	// failRefreshAfter fails PublishRefresh once this many have succeeded (0 = never).
+	failRefreshAfter int
+	refreshCalls     int
 }
 
 func (m *memPublisher) PublishRefresh(ctx context.Context, job queue.RefreshJob) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.refreshCalls++
+	if m.failRefreshAfter > 0 && m.refreshCalls > m.failRefreshAfter {
+		return fmt.Errorf("publish failed")
+	}
 	m.jobs = append(m.jobs, job)
+	return nil
+}
+
+func (m *memPublisher) PublishBatchKick(ctx context.Context, kick queue.BatchKick) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.kicks = append(m.kicks, kick)
 	return nil
 }
 
@@ -149,10 +165,23 @@ func TestStartRefreshAllEnqueuesJobs(t *testing.T) {
 		t.Fatal("expected batch id")
 	}
 	pub.mu.Lock()
-	n := len(pub.jobs)
+	nJobs := len(pub.jobs)
+	nKicks := len(pub.kicks)
 	pub.mu.Unlock()
-	if n != 1 {
-		t.Fatalf("published = %d, want 1", n)
+	if nJobs != 0 {
+		t.Fatalf("published refresh jobs = %d, want 0 (kick only)", nJobs)
+	}
+	if nKicks != 1 {
+		t.Fatalf("published kicks = %d, want 1", nKicks)
+	}
+	if err := batches.FanOutBatch(context.Background(), res.BatchID); err != nil {
+		t.Fatalf("FanOutBatch: %v", err)
+	}
+	pub.mu.Lock()
+	nJobs = len(pub.jobs)
+	pub.mu.Unlock()
+	if nJobs != 1 {
+		t.Fatalf("after fan-out published = %d, want 1", nJobs)
 	}
 	status, err := batches.GetBatchStatus(context.Background(), res.BatchID)
 	if err != nil {
@@ -357,5 +386,86 @@ func TestProcessRefreshJob_ServerExhaustsBudget(t *testing.T) {
 	}
 	if row.Status != schema.RefreshJobStatusFailed {
 		t.Fatalf("status = %v, want failed", row.Status)
+	}
+}
+
+func TestFanOutBatch_RecoversPendingOnly(t *testing.T) {
+	client := enttest.Open(t, "sqlite3", "file:batchfanout?mode=memory&cache=shared&_fk=1")
+	defer client.Close()
+	ctx := context.Background()
+
+	mkRepo := func(name string) uuid.UUID {
+		t.Helper()
+		r, err := client.Repository.Create().
+			SetOwner("org").
+			SetName(name).
+			SetFullName("org/"+name).
+			SetHTMLURL("https://github.com/org/"+name).
+			SetFetchedAt(time.Now().UTC()).
+			Save(ctx)
+		if err != nil {
+			t.Fatalf("create repo: %v", err)
+		}
+		return r.ID
+	}
+	pendingA := mkRepo("a")
+	pendingB := mkRepo("b")
+	done := mkRepo("done")
+
+	batch, err := client.RefreshBatch.Create().Save(ctx)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	for _, repoID := range []uuid.UUID{pendingA, pendingB} {
+		_, err = client.RefreshBatchJob.Create().
+			SetID(uuid.New()).
+			SetBatchID(batch.ID).
+			SetRepoID(repoID).
+			SetStatus(schema.RefreshJobStatusPending).
+			Save(ctx)
+		if err != nil {
+			t.Fatalf("pending job: %v", err)
+		}
+	}
+	_, err = client.RefreshBatchJob.Create().
+		SetID(uuid.New()).
+		SetBatchID(batch.ID).
+		SetRepoID(done).
+		SetStatus(schema.RefreshJobStatusSucceeded).
+		Save(ctx)
+	if err != nil {
+		t.Fatalf("done job: %v", err)
+	}
+
+	pub := &memPublisher{failRefreshAfter: 1}
+	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), pub, nil, 3)
+
+	err = batches.FanOutBatch(ctx, batch.ID)
+	var te *queue.TransientError
+	if !queue.AsTransient(err, &te) {
+		t.Fatalf("err = %v, want transient after mid-loop failure", err)
+	}
+	pub.mu.Lock()
+	first := len(pub.jobs)
+	pub.mu.Unlock()
+	if first != 1 {
+		t.Fatalf("published before failure = %d, want 1", first)
+	}
+
+	// Simulate kick redelivery: reset fail gate and fan out again — only pending remain.
+	pub.mu.Lock()
+	pub.failRefreshAfter = 0
+	pub.refreshCalls = 0
+	pub.jobs = nil
+	pub.mu.Unlock()
+
+	if err := batches.FanOutBatch(ctx, batch.ID); err != nil {
+		t.Fatalf("retry FanOutBatch: %v", err)
+	}
+	pub.mu.Lock()
+	n := len(pub.jobs)
+	pub.mu.Unlock()
+	if n != 2 {
+		t.Fatalf("republished = %d, want 2 pending only", n)
 	}
 }
