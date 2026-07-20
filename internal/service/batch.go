@@ -79,7 +79,10 @@ func (s *BatchService) StartRefreshAll(ctx context.Context) (RefreshAllAccepted,
 		return RefreshAllAccepted{}, err
 	}
 	if err := s.publisher.PublishBatchKick(ctx, queue.BatchKick{BatchID: batch.ID}); err != nil {
-		return RefreshAllAccepted{}, apierror.Unavailable("failed to enqueue batch kick; retry via POST /api/batches/:id/enqueue")
+		// Jobs are already committed; surface batch_id so clients can call the repair endpoint.
+		return RefreshAllAccepted{}, apierror.Unavailable(
+			fmt.Sprintf("failed to enqueue batch kick; retry via POST /api/batches/%s/enqueue", batch.ID),
+		)
 	}
 	return RefreshAllAccepted{BatchID: batch.ID}, nil
 }

@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ type memPublisher struct {
 	// failRefreshAfter fails PublishRefresh once this many have succeeded (0 = never).
 	failRefreshAfter int
 	refreshCalls     int
+	failKick         bool
 }
 
 func (m *memPublisher) PublishRefresh(ctx context.Context, job queue.RefreshJob) error {
@@ -42,6 +44,9 @@ func (m *memPublisher) PublishRefresh(ctx context.Context, job queue.RefreshJob)
 func (m *memPublisher) PublishBatchKick(ctx context.Context, kick queue.BatchKick) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.failKick {
+		return fmt.Errorf("kick publish failed")
+	}
 	m.kicks = append(m.kicks, kick)
 	return nil
 }
@@ -189,6 +194,50 @@ func TestStartRefreshAllEnqueuesJobs(t *testing.T) {
 	}
 	if status.Total != 1 || status.Pending != 1 {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestStartRefreshAllKickFailureExposesBatchID(t *testing.T) {
+	client := enttest.Open(t, "sqlite3", "file:batchkickfail?mode=memory&cache=shared&_fk=1")
+	defer client.Close()
+
+	_, err := client.Repository.Create().
+		SetOwner("golang").
+		SetName("go").
+		SetFullName("golang/go").
+		SetHTMLURL("https://github.com/golang/go").
+		SetFetchedAt(time.Now().UTC()).
+		Save(context.Background())
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	pub := &memPublisher{failKick: true}
+	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), pub, nil, 3)
+
+	_, err = batches.StartRefreshAll(context.Background())
+	if err == nil {
+		t.Fatal("expected kick publish error")
+	}
+	ae, ok := apierror.As(err)
+	if !ok || ae.Code != apierror.CodeUnavailable {
+		t.Fatalf("want unavailable apierror, got %v", err)
+	}
+	pending, err := client.RefreshBatchJob.Query().
+		Where(refreshbatchjob.StatusEQ(schema.RefreshJobStatusPending)).
+		All(context.Background())
+	if err != nil {
+		t.Fatalf("query jobs: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending jobs = %d, want 1", len(pending))
+	}
+	batchID := pending[0].BatchID.String()
+	if !strings.Contains(ae.Message, batchID) {
+		t.Fatalf("error message %q does not include batch_id %s for repair", ae.Message, batchID)
+	}
+	if !strings.Contains(ae.Message, "/api/batches/"+batchID+"/enqueue") {
+		t.Fatalf("error message %q missing repair path", ae.Message)
 	}
 }
 

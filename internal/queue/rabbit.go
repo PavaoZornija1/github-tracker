@@ -141,6 +141,16 @@ func (p *Publisher) ensureChannel() error {
 	return nil
 }
 
+// resetChannelLocked closes the publish channel so a late/stale confirm cannot
+// be paired with a later publish. Caller must hold p.mu.
+func (p *Publisher) resetChannelLocked() {
+	if p.ch != nil {
+		_ = p.ch.Close()
+		p.ch = nil
+	}
+	p.confirms = nil
+}
+
 func (p *Publisher) publishConfirmed(ctx context.Context, exchange, key string, msg amqp.Publishing) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -148,9 +158,9 @@ func (p *Publisher) publishConfirmed(ctx context.Context, exchange, key string, 
 	if err := p.ensureChannel(); err != nil {
 		return err
 	}
+	expectedTag := p.ch.GetNextPublishSeqNo()
 	if err := p.ch.PublishWithContext(ctx, exchange, key, false, false, msg); err != nil {
-		_ = p.ch.Close()
-		p.ch = nil
+		p.resetChannelLocked()
 		return err
 	}
 
@@ -165,13 +175,19 @@ func (p *Publisher) publishConfirmed(ctx context.Context, exchange, key string, 
 
 	select {
 	case <-ctx.Done():
+		p.resetChannelLocked()
 		return ctx.Err()
 	case <-timer.C:
+		p.resetChannelLocked()
 		return fmt.Errorf("publish confirm timeout after %s", timeout)
 	case conf, ok := <-p.confirms:
 		if !ok {
-			p.ch = nil
+			p.resetChannelLocked()
 			return fmt.Errorf("confirm channel closed")
+		}
+		if conf.DeliveryTag != expectedTag {
+			p.resetChannelLocked()
+			return fmt.Errorf("publish confirm tag mismatch: got %d want %d", conf.DeliveryTag, expectedTag)
 		}
 		if !conf.Ack {
 			return fmt.Errorf("publish nacked by broker")
