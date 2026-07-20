@@ -123,13 +123,13 @@ Effort: **S** ≤ ~half day · **M** ~1–2 days · **L** multi-day / design-hea
 
 ## Recommended demo talking points
 
-Own the trade-offs; do not claim “production complete.”
+Own the trade-offs; do not claim “production complete.” P0 correctness items below are **already fixed** — update the “what next” story accordingly.
 
-1. **Architecture split** — Why RabbitMQ for jobs and Redis only for cache/locks (eviction vs durability). Point at Compose + two binaries.
-2. **Concurrency story** — UNIQUE + 409 demo; cache single-flight (`SET NX` + double-check); worker QoS 5 + idempotent conditional updates.
-3. **Failure modes you already handle** — Typed GitHub errors; permanent → DLQ *intent*; shutdown nack/redeliver during backoff.
-4. **What you would fix next (P0)** — Say out loud: “Today, if DLQ publish fails we still ack — that’s a bug I’d fix first. Refresh-all enqueue isn’t transactional with Rabbit. Rate limits can exhaust retry budget.” That honesty reads as senior.
-5. **Migrations** — Auto-migrate is intentional for local/demo; Atlas before multi-replica prod.
+1. **Architecture split** — Why RabbitMQ for jobs and Redis only for cache/locks (eviction vs durability). Point at Compose profiles + two binaries.
+2. **Concurrency story** — UNIQUE + 409 demo; cache single-flight (`SET NX` + token/Lua); worker QoS 5 + idempotent conditional updates.
+3. **Failure modes you already handle** — Typed GitHub errors; permanent → DLQ with nack-if-publish-fails; rate-limit cool-down without burning retry budget; kick + fan-out + repair enqueue; TTL retry topology; publisher confirms; shutdown nack/redeliver.
+4. **What you would fix next (honest residual)** — Full Atlas versioned migrations + CI; richer RED metrics / queue depth / rate-limit gauge; optional Rabbit in `/readyz` or separate enqueue readiness; DLQ replay CLI beyond the runbook.
+5. **Migrations** — `APP_ENV=production` skips Ent `Schema.Create`; Atlas before multi-replica rolling deploys (`migrations/README.md`).
 6. **AI workflow** — Research → Worker → Review and the invariant checklist in `AGENTS.md` as how you keep agents from breaking ack/lock/409 paths.
 
 ---

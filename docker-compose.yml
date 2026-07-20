@@ -51,8 +51,7 @@ services:
     ports:
       - "8080:8080"
     env_file:
-      - path: .env
-        required: false
+      - .env
     environment:
       DATABASE_URL: postgres://tracker:tracker@postgres:5432/tracker?sslmode=disable
       REDIS_URL: redis://redis:6379/0
@@ -79,8 +78,7 @@ services:
       target: worker
     profiles: ["full"]
     env_file:
-      - path: .env
-        required: false
+      - .env
     environment:
       DATABASE_URL: postgres://tracker:tracker@postgres:5432/tracker?sslmode=disable
       REDIS_URL: redis://redis:6379/0
