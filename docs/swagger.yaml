@@ -148,6 +148,40 @@ paths:
       summary: Get batch status
       tags:
       - batches
+  /batches/{id}/enqueue:
+    post:
+      description: Repair path when kick publish failed after job rows were created.
+      parameters:
+      - description: Batch ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope'
+      summary: Re-enqueue batch kick
+      tags:
+      - batches
   /repos:
     get:
       description: Cursor-paginated list with optional language filter and sort.

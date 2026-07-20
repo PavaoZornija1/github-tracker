@@ -56,6 +56,57 @@
                 }
             }
         },
+        "/batches/{id}/enqueue": {
+            "post": {
+                "description": "Repair path when kick publish failed after job rows were created.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "batches"
+                ],
+                "summary": "Re-enqueue batch kick",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Batch ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_PavaoZornija1_github-tracker_internal_apierror.Envelope"
+                        }
+                    }
+                }
+            }
+        },
         "/repos": {
             "get": {
                 "description": "Cursor-paginated list with optional language filter and sort.",
