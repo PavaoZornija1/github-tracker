@@ -10,6 +10,7 @@ GitHub repo tracker API + worker: **Gin, Ent, Postgres, Redis (cache only), Rabb
 
 **Research → Worker → Review** for non-trivial work (Research starts from the design spec).  
 Live edits: `.cursor/skills/micro-rwr/SKILL.md`.  
+Quick map: `.cursor/skills/project-overview/SKILL.md`.  
 See `.cursor/skills/research-worker-review/SKILL.md` and `docs/workflows/research-worker-review.md`.
 
 ## Non-negotiables

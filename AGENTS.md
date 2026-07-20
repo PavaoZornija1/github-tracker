@@ -8,6 +8,8 @@ Read `docs/superpowers/specs/2026-07-19-github-tracker-design.md` before large c
 
 ## How we work (agentic)
 
+**New to the repo / need a map:** `.cursor/skills/project-overview/SKILL.md`
+
 **Default for non-trivial tasks:** Research → Worker → Review.
 
 - Skill: `.cursor/skills/research-worker-review/SKILL.md` (Research starts from `docs/superpowers/specs/2026-07-19-github-tracker-design.md`)

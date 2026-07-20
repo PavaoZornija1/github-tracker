@@ -130,6 +130,7 @@ GitHub payloads live in Redis under `gh:repo:{owner}/{name}` with a **5-minute T
 
 Non-trivial work uses **Research → Worker → Review**; live edits use **micro-RWR**:
 
+- Quick orientation: [`.cursor/skills/project-overview/SKILL.md`](.cursor/skills/project-overview/SKILL.md)
 - [docs/workflows/research-worker-review.md](docs/workflows/research-worker-review.md)
 - [AGENTS.md](AGENTS.md)
 - Full skill: [`.cursor/skills/research-worker-review/SKILL.md`](.cursor/skills/research-worker-review/SKILL.md)
