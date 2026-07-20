@@ -1,13 +1,14 @@
 ---
 description: GitHub client, Redis cache, and single-flight rules
-globs: internal/githubclient/**/*.go,internal/cache/**/*.go
+globs: internal/githubclient/**/*.go,internal/cache/**/*.go,internal/ratelimit/**/*.go
 alwaysApply: false
 ---
 
 # GitHub client and cache
 
 - Distinguish: not-found, rate-limited, unauthorized, server-error, network — never collapse all to 500
-- Explicit HTTP timeout; honor `Retry-After` and `X-RateLimit-Remaining`
+- Honor `Retry-After` and `X-RateLimit-Remaining` / `X-RateLimit-Reset`
+- Fleet gate (`internal/ratelimit`) before upstream fetch; observe headers into Redis
 - Cache key `gh:repo:{owner}/{name}`, TTL 5m; lock key `gh:lock:{owner}/{name}` via `SET NX` + expiry
 - Concurrent cache miss → exactly one GitHub call; handle lock-holder death via lock TTL
 - Sync/async refresh must invalidate the cache key

@@ -23,7 +23,7 @@ Trivial one-liners can be inline. Anything touching invariants below gets micro-
 ## Stack
 
 - Go 1.22+, Gin, Ent, PostgreSQL
-- Redis — **cache and single-flight locks only**
+- Redis — **cache, single-flight locks, and fleet GitHub rate gate only** (not the job queue)
 - RabbitMQ — async refresh jobs + DLQ
 - swaggo OpenAPI at `/swagger/index.html`
 - Binaries: `cmd/api`, `cmd/worker`
@@ -35,9 +35,10 @@ Trivial one-liners can be inline. Anything touching invariants below gets micro-
 3. Worker concurrency capped at **5**.
 4. GitHub client: explicit timeout, context, typed errors (not-found / rate-limit / unauthorized / server / network).
 5. Cache TTL 5m; concurrent miss → exactly one GitHub call via Redis `SET NX` lock.
-6. Error JSON: `{ "error": { "code", "message" } }`.
-7. Graceful shutdown: API drains; worker nacks/redelivers in-flight — no lost jobs.
-8. Imports at package top only (no inline imports).
+6. Fleet-wide GitHub rate gate in Redis (API + workers); local `WORKER_CONCURRENCY` is per process only.
+7. Error JSON: `{ "error": { "code", "message" } }`.
+8. Graceful shutdown: API drains; worker nacks/redelivers in-flight — no lost jobs.
+9. Imports at package top only (no inline imports).
 
 ## Layout
 
@@ -48,6 +49,7 @@ Trivial one-liners can be inline. Anything touching invariants below gets micro-
 | `internal/service` | Use cases |
 | `internal/githubclient` | GitHub HTTP + error classes |
 | `internal/cache` | Redis cache/lock |
+| `internal/ratelimit` | Fleet GitHub rate gate (Redis) |
 | `internal/queue` | Rabbit publisher/consumer |
 | `ent/schema` | Ent schema source |
 
@@ -57,7 +59,7 @@ Before accepting generated code, re-read:
 
 - Unique constraint / 409 mapping
 - Ack-after-commit and idempotent batch counters
-- Lock TTL vs holder-died path
+- Lock TTL vs holder-died path; fleet GitHub rate gate across replicas
 - Shutdown ordering
 - Every GitHub failure mode → status or retry
 

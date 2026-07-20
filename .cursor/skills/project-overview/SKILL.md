@@ -46,6 +46,7 @@ Only go deeper if the question needs it.
 - Work queue + **TTL retry** queue + **DLQ**  
 - Ack only after terminal DB state **or** successful retry/DLQ publish; else Nack(requeue)  
 - 429 cool-down does **not** burn retry budget  
+- Fleet GitHub rate gate in Redis paces API + workers before upstream calls  
 
 ## What not to assume
 

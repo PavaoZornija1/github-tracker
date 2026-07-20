@@ -57,7 +57,7 @@ func TestConcurrentPOSTCreateConflict(t *testing.T) {
 			FetchedAt: time.Now().UTC(),
 		},
 	})
-	batches := service.NewBatchService(client, svc, nopPublisher{}, nil, 3)
+	batches := service.NewBatchService(client, svc, nopPublisher{}, 3)
 	engine := httpapi.NewRouter(httpapi.RouterDeps{
 		Repos:     svc,
 		Batches: batches,

@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
+	"github.com/PavaoZornija1/github-tracker/internal/ratelimit"
 )
 
 // compare-and-del: only the lock holder may release.
@@ -31,16 +32,18 @@ type RepoFetcher interface {
 type GitHubCache struct {
 	rdb      *redis.Client
 	fetcher  RepoFetcher
+	gate     *ratelimit.GitHubGate
 	ttl      time.Duration
 	lockTTL  time.Duration
 	waitTick time.Duration
 }
 
-// GitHubCacheOptions configures cache TTLs.
+// GitHubCacheOptions configures cache TTLs and optional fleet rate gate.
 type GitHubCacheOptions struct {
 	TTL      time.Duration
 	LockTTL  time.Duration
 	WaitTick time.Duration
+	Gate     *ratelimit.GitHubGate
 }
 
 // NewGitHubCache builds a caching wrapper around a RepoFetcher.
@@ -60,6 +63,7 @@ func NewGitHubCache(rdb *redis.Client, fetcher RepoFetcher, opts GitHubCacheOpti
 	return &GitHubCache{
 		rdb:      rdb,
 		fetcher:  fetcher,
+		gate:     opts.Gate,
 		ttl:      ttl,
 		lockTTL:  lockTTL,
 		waitTick: tick,
@@ -89,12 +93,18 @@ func newLockToken() (string, error) {
 // lock holder finishes (writes cache, deletes lock), peers read the cache instead
 // of racing to fetch again. If the holder dies, the lock TTL expires and a waiter
 // can acquire it on the next loop.
+//
+// Fleet rate gate runs before lock acquire so cool-downs do not stampede locks.
 func (c *GitHubCache) Get(ctx context.Context, owner, name string) (*githubclient.Repo, error) {
 	for {
 		if repo, ok, err := c.getCached(ctx, owner, name); err != nil {
 			return nil, err
 		} else if ok {
 			return repo, nil
+		}
+
+		if err := c.gate.Allow(ctx); err != nil {
+			return nil, err
 		}
 
 		token, err := newLockToken()
@@ -151,6 +161,11 @@ func (c *GitHubCache) fetchAndCache(ctx context.Context, owner, name, token stri
 	defer func() {
 		_ = c.releaseLock(ctx, owner, name, token)
 	}()
+
+	// Re-check after winning the lock; cool-down may have started while waiting.
+	if err := c.gate.Allow(ctx); err != nil {
+		return nil, err
+	}
 
 	repo, err := c.fetcher.GetRepo(ctx, owner, name)
 	if err != nil {

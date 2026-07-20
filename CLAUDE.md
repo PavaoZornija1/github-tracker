@@ -4,7 +4,7 @@ North star for Claude and other coding agents. Prefer `AGENTS.md` as the full br
 
 ## Project
 
-GitHub repo tracker API + worker: **Gin, Ent, Postgres, Redis (cache only), RabbitMQ (jobs).**
+GitHub repo tracker API + worker: **Gin, Ent, Postgres, Redis (cache/locks/rate gate), RabbitMQ (jobs).**
 
 ## Agentic default
 
@@ -15,10 +15,11 @@ See `.cursor/skills/research-worker-review/SKILL.md` and `docs/workflows/researc
 
 ## Non-negotiables
 
-- Do **not** use Redis as the job queue.
+- Do **not** use Redis as the job queue (cache, locks, and GitHub rate gate only).
 - Two entrypoints: `cmd/api`, `cmd/worker`.
 - Concurrent duplicate create → DB unique + **409**.
 - Worker: max 5 in flight, idempotent, DLQ after permanent/exhausted retries.
+- Fleet-wide GitHub rate gate across API/worker replicas.
 - Structured `slog`; request-id / job-id via context.
 - Small commits; own every concurrency and retry path.
 

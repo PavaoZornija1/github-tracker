@@ -19,6 +19,7 @@ import (
 	"github.com/PavaoZornija1/github-tracker/internal/platform/logging"
 	"github.com/PavaoZornija1/github-tracker/internal/platform/redisx"
 	"github.com/PavaoZornija1/github-tracker/internal/queue"
+	"github.com/PavaoZornija1/github-tracker/internal/ratelimit"
 	"github.com/PavaoZornija1/github-tracker/internal/service"
 
 	_ "github.com/PavaoZornija1/github-tracker/docs"
@@ -57,11 +58,12 @@ func main() {
 	defer rdb.Close()
 
 	mq, err := queue.Connect(queue.Config{
-		URL:      cfg.RabbitMQURL,
-		Exchange: cfg.RabbitMQExchange,
-		Queue:    cfg.RabbitMQQueue,
-		DLX:      cfg.RabbitMQDLX,
-		DLQ:      cfg.RabbitMQDLQ,
+		URL:                cfg.RabbitMQURL,
+		Exchange:           cfg.RabbitMQExchange,
+		Queue:              cfg.RabbitMQQueue,
+		DLX:                cfg.RabbitMQDLX,
+		DLQ:                cfg.RabbitMQDLQ,
+		MaxRetryExpiration: cfg.GitHubRateLimitRetryMax,
 	})
 	if err != nil {
 		logger.Error("open rabbitmq", "err", err)
@@ -69,17 +71,20 @@ func main() {
 	}
 	defer mq.Close()
 
+	gate := ratelimit.NewGitHubGate(rdb)
 	gh := githubclient.New(githubclient.Options{
-		BaseURL: cfg.GitHubAPIBaseURL,
-		Token:   cfg.GitHubToken,
-		Timeout: cfg.GitHubHTTPTimeout,
+		BaseURL:  cfg.GitHubAPIBaseURL,
+		Token:    cfg.GitHubToken,
+		Timeout:  cfg.GitHubHTTPTimeout,
+		Observer: gate,
 	})
 	ghCache := cache.NewGitHubCache(rdb, gh, cache.GitHubCacheOptions{
 		TTL:     cfg.GitHubCacheTTL,
 		LockTTL: cfg.GitHubFetchLockTTL,
+		Gate:    gate,
 	})
 	repoSvc := service.NewRepoService(entClient, ghCache)
-	batchSvc := service.NewBatchService(entClient, repoSvc, queue.NewPublisher(mq), rdb, cfg.WorkerMaxRetries)
+	batchSvc := service.NewBatchService(entClient, repoSvc, queue.NewPublisher(mq), cfg.WorkerMaxRetries)
 
 	engine := httpapi.NewRouter(httpapi.RouterDeps{
 		Repos:   repoSvc,

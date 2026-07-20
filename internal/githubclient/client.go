@@ -11,12 +11,25 @@ import (
 	"time"
 )
 
+// RateLimitInfo is parsed from GitHub rate-limit response headers.
+type RateLimitInfo struct {
+	Remaining  int // -1 if unknown
+	ResetAt    time.Time
+	RetryAfter time.Duration
+}
+
+// RateLimitObserver records rate-limit headers for fleet-wide gating.
+type RateLimitObserver interface {
+	OnRateLimit(ctx context.Context, info RateLimitInfo)
+}
+
 // Client talks to the GitHub REST API with an explicit timeout and typed errors.
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	token      string
 	userAgent  string
+	observer   RateLimitObserver
 }
 
 // Options configures a Client.
@@ -26,6 +39,7 @@ type Options struct {
 	Timeout    time.Duration
 	HTTPClient *http.Client
 	UserAgent  string
+	Observer   RateLimitObserver
 }
 
 // New builds a GitHub API client.
@@ -51,6 +65,7 @@ func New(opts Options) *Client {
 		baseURL:    base,
 		token:      opts.Token,
 		userAgent:  ua,
+		observer:   opts.Observer,
 	}
 }
 
@@ -82,8 +97,11 @@ func (c *Client) GetRepo(ctx context.Context, owner, name string) (*Repo, error)
 		return nil, networkError(err)
 	}
 
-	remaining := parseRemaining(res.Header.Get("X-RateLimit-Remaining"))
-	retryAfter := parseRetryAfter(res.Header.Get("Retry-After"))
+	info := parseRateLimitInfo(res.Header)
+	c.notifyObserver(ctx, info)
+
+	remaining := info.Remaining
+	retryAfter := info.RetryAfter
 
 	switch {
 	case res.StatusCode == http.StatusOK:
@@ -125,6 +143,28 @@ func (c *Client) GetRepo(ctx context.Context, owner, name string) (*Repo, error)
 	}
 }
 
+func (c *Client) notifyObserver(ctx context.Context, info RateLimitInfo) {
+	if c == nil || c.observer == nil {
+		return
+	}
+	if info.Remaining < 0 && info.ResetAt.IsZero() && info.RetryAfter <= 0 {
+		return
+	}
+	c.observer.OnRateLimit(ctx, info)
+}
+
+func parseRateLimitInfo(h http.Header) RateLimitInfo {
+	remaining := parseRemaining(h.Get("X-RateLimit-Remaining"))
+	retryAfter := parseRetryAfter(h.Get("Retry-After"))
+	resetAt := parseReset(h.Get("X-RateLimit-Reset"))
+	if retryAfter <= 0 && remaining == 0 && !resetAt.IsZero() {
+		if d := time.Until(resetAt); d > 0 {
+			retryAfter = d
+		}
+	}
+	return RateLimitInfo{Remaining: remaining, ResetAt: resetAt, RetryAfter: retryAfter}
+}
+
 func parseRemaining(v string) int {
 	if v == "" {
 		return -1
@@ -134,6 +174,17 @@ func parseRemaining(v string) int {
 		return -1
 	}
 	return n
+}
+
+func parseReset(v string) time.Time {
+	if v == "" {
+		return time.Time{}
+	}
+	sec, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0).UTC()
 }
 
 func parseRetryAfter(v string) time.Duration {

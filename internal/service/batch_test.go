@@ -108,7 +108,7 @@ func TestProcessRefreshJobIdempotent(t *testing.T) {
 		FetchedAt: time.Now().UTC(),
 	}}
 	repos := service.NewRepoService(client, gh)
-	batches := service.NewBatchService(client, repos, &memPublisher{}, nil, 3)
+	batches := service.NewBatchService(client, repos, &memPublisher{}, 3)
 
 	job := queue.RefreshJob{JobID: jobID, BatchID: batch.ID, RepoID: repo.ID}
 	if err := batches.ProcessRefreshJob(context.Background(), job, 1); err != nil {
@@ -160,7 +160,7 @@ func TestStartRefreshAllEnqueuesJobs(t *testing.T) {
 
 	pub := &memPublisher{}
 	repos := service.NewRepoService(client, &refreshGitHub{})
-	batches := service.NewBatchService(client, repos, pub, nil, 3)
+	batches := service.NewBatchService(client, repos, pub, 3)
 
 	res, err := batches.StartRefreshAll(context.Background())
 	if err != nil {
@@ -213,7 +213,7 @@ func TestStartRefreshAllKickFailureExposesBatchID(t *testing.T) {
 	}
 
 	pub := &memPublisher{failKick: true}
-	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), pub, nil, 3)
+	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), pub, 3)
 
 	_, err = batches.StartRefreshAll(context.Background())
 	if err == nil {
@@ -299,7 +299,7 @@ func TestGetBatchStatusMixedAggregation(t *testing.T) {
 		t.Fatalf("failed job: %v", err)
 	}
 
-	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), &memPublisher{}, nil, 3)
+	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), &memPublisher{}, 3)
 	status, err := batches.GetBatchStatus(ctx, batch.ID)
 	if err != nil {
 		t.Fatalf("GetBatchStatus: %v", err)
@@ -319,7 +319,7 @@ func TestGetBatchStatusUnknownBatch(t *testing.T) {
 	client := enttest.Open(t, "sqlite3", "file:batchmissing?mode=memory&cache=shared&_fk=1")
 	defer client.Close()
 
-	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), &memPublisher{}, nil, 3)
+	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), &memPublisher{}, 3)
 	_, err := batches.GetBatchStatus(context.Background(), uuid.New())
 	ae, ok := apierror.As(err)
 	if !ok || ae.Code != apierror.CodeNotFound {
@@ -362,7 +362,7 @@ func TestProcessRefreshJob_RateLimitDoesNotExhaustBudget(t *testing.T) {
 		Message:    "rate limited",
 		RetryAfter: time.Second,
 	}}
-	batches := service.NewBatchService(client, service.NewRepoService(client, gh), &memPublisher{}, nil, 3)
+	batches := service.NewBatchService(client, service.NewRepoService(client, gh), &memPublisher{}, 3)
 	job := queue.RefreshJob{JobID: jobID, BatchID: batch.ID, RepoID: repo.ID}
 
 	err = batches.ProcessRefreshJob(context.Background(), job, 3)
@@ -417,7 +417,7 @@ func TestProcessRefreshJob_ServerExhaustsBudget(t *testing.T) {
 		StatusCode: 500,
 		Message:    "boom",
 	}}
-	batches := service.NewBatchService(client, service.NewRepoService(client, gh), &memPublisher{}, nil, 3)
+	batches := service.NewBatchService(client, service.NewRepoService(client, gh), &memPublisher{}, 3)
 	job := queue.RefreshJob{JobID: jobID, BatchID: batch.ID, RepoID: repo.ID}
 
 	err = batches.ProcessRefreshJob(context.Background(), job, 3)
@@ -487,7 +487,7 @@ func TestFanOutBatch_RecoversPendingOnly(t *testing.T) {
 	}
 
 	pub := &memPublisher{failRefreshAfter: 1}
-	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), pub, nil, 3)
+	batches := service.NewBatchService(client, service.NewRepoService(client, &refreshGitHub{}), pub, 3)
 
 	err = batches.FanOutBatch(ctx, batch.ID)
 	var te *queue.TransientError

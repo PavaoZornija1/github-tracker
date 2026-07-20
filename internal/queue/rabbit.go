@@ -25,6 +25,8 @@ type Config struct {
 	Queue    string
 	DLX      string
 	DLQ      string
+	// MaxRetryExpiration caps per-message TTL on the retry queue (default 15m).
+	MaxRetryExpiration time.Duration
 }
 
 // RetryQueueName derives the TTL retry queue from the main work queue.
@@ -256,14 +258,23 @@ func (p *Publisher) PublishDeadLetter(ctx context.Context, job RefreshJob, reaso
 // PublishRetry parks a transient failure on the TTL retry queue until expiration,
 // then dead-letters back to the main refresh routing key.
 func (p *Publisher) PublishRetry(ctx context.Context, job RefreshJob, attempt int, expiration time.Duration) error {
+	expiration = ClampRetryExpiration(expiration, p.client.cfg.MaxRetryExpiration)
+	ms := strconv.FormatInt(expiration.Milliseconds(), 10)
+	return p.publishRefresh(ctx, p.client.cfg.Exchange, RoutingKeyRetry, job, attempt, ms)
+}
+
+// ClampRetryExpiration bounds retry TTL for the delay queue.
+func ClampRetryExpiration(expiration, max time.Duration) time.Duration {
+	if max <= 0 {
+		max = 15 * time.Minute
+	}
 	if expiration < time.Millisecond {
 		expiration = time.Millisecond
 	}
-	if expiration > 60*time.Second {
-		expiration = 60 * time.Second
+	if expiration > max {
+		expiration = max
 	}
-	ms := strconv.FormatInt(expiration.Milliseconds(), 10)
-	return p.publishRefresh(ctx, p.client.cfg.Exchange, RoutingKeyRetry, job, attempt, ms)
+	return expiration
 }
 
 // Handler processes one refresh delivery. attempt is 1-based from message headers.

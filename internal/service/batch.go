@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/PavaoZornija1/github-tracker/ent/schema"
 	"github.com/PavaoZornija1/github-tracker/internal/apierror"
@@ -17,8 +16,6 @@ import (
 	"github.com/PavaoZornija1/github-tracker/internal/metrics"
 	"github.com/PavaoZornija1/github-tracker/internal/queue"
 )
-
-const githubRateLimitKey = "github:rate_limit_until"
 
 // JobPublisher enqueues refresh jobs and batch kicks.
 type JobPublisher interface {
@@ -31,11 +28,10 @@ type BatchService struct {
 	client     *ent.Client
 	repos      *RepoService
 	publisher  JobPublisher
-	rdb        *redis.Client
 	maxRetries int
 }
 
-func NewBatchService(client *ent.Client, repos *RepoService, publisher JobPublisher, rdb *redis.Client, maxRetries int) *BatchService {
+func NewBatchService(client *ent.Client, repos *RepoService, publisher JobPublisher, maxRetries int) *BatchService {
 	if maxRetries < 1 {
 		maxRetries = 3
 	}
@@ -43,7 +39,6 @@ func NewBatchService(client *ent.Client, repos *RepoService, publisher JobPublis
 		client:     client,
 		repos:      repos,
 		publisher:  publisher,
-		rdb:        rdb,
 		maxRetries: maxRetries,
 	}
 }
@@ -203,10 +198,6 @@ func (s *BatchService) ProcessRefreshJob(ctx context.Context, job queue.RefreshJ
 		return err
 	}
 
-	if err := s.waitOutRateLimit(ctx); err != nil {
-		return err
-	}
-
 	_, err = s.repos.Refresh(ctx, job.RepoID)
 	if err == nil {
 		return s.markSucceeded(ctx, job.JobID)
@@ -216,10 +207,7 @@ func (s *BatchService) ProcessRefreshJob(ctx context.Context, job queue.RefreshJ
 		metrics.IncGitHubError(githubErrorKindLabel(ge.Kind))
 		switch ge.Kind {
 		case githubclient.KindRateLimited:
-			if ge.RetryAfter > 0 && s.rdb != nil {
-				_ = s.rdb.Set(ctx, githubRateLimitKey, time.Now().Add(ge.RetryAfter).UTC().Format(time.RFC3339Nano), ge.RetryAfter).Err()
-			}
-			// Rate limits never burn the retry budget; only 5xx/network do.
+			// Rate limits never burn the retry budget; fleet gate/observer owns cool-down.
 			return queue.NewRateLimited(err, ge.RetryAfter)
 		case githubclient.KindServer, githubclient.KindNetwork:
 			if attempt >= s.maxRetries {
@@ -289,26 +277,4 @@ func (s *BatchService) markFailed(ctx context.Context, jobID uuid.UUID, reason s
 	}
 	_ = n
 	return nil
-}
-
-func (s *BatchService) waitOutRateLimit(ctx context.Context) error {
-	if s.rdb == nil {
-		return nil
-	}
-	val, err := s.rdb.Get(ctx, githubRateLimitKey).Result()
-	if err == redis.Nil {
-		return nil
-	}
-	if err != nil {
-		return queue.NewTransient(err, time.Second)
-	}
-	until, err := time.Parse(time.RFC3339Nano, val)
-	if err != nil {
-		return nil
-	}
-	delay := time.Until(until)
-	if delay <= 0 {
-		return nil
-	}
-	return queue.NewRateLimited(fmt.Errorf("backing off github rate limit"), delay)
 }

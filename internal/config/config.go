@@ -30,6 +30,8 @@ type Config struct {
 	GitHubHTTPTimeout  time.Duration
 	GitHubCacheTTL     time.Duration
 	GitHubFetchLockTTL time.Duration
+	// GitHubRateLimitRetryMax caps Rabbit retry TTL for rate-limit delays (default 15m).
+	GitHubRateLimitRetryMax time.Duration
 
 	LogLevel string
 }
@@ -59,12 +61,13 @@ func Load() (Config, error) {
 		RabbitMQDLX:        getEnv("RABBITMQ_DLX", "repo.jobs.dlx"),
 		WorkerConcurrency:  getEnvInt("WORKER_CONCURRENCY", 5),
 		WorkerMaxRetries:   getEnvInt("WORKER_MAX_RETRIES", 3),
-		GitHubToken:        os.Getenv("GITHUB_TOKEN"),
-		GitHubAPIBaseURL:   getEnv("GITHUB_API_BASE_URL", "https://api.github.com"),
-		GitHubHTTPTimeout:  getEnvDuration("GITHUB_HTTP_TIMEOUT", 10*time.Second),
-		GitHubCacheTTL:     getEnvDuration("GITHUB_CACHE_TTL", 5*time.Minute),
-		GitHubFetchLockTTL: getEnvDuration("GITHUB_FETCH_LOCK_TTL", 30*time.Second),
-		LogLevel:           getEnv("LOG_LEVEL", "info"),
+		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
+		GitHubAPIBaseURL:        getEnv("GITHUB_API_BASE_URL", "https://api.github.com"),
+		GitHubHTTPTimeout:       getEnvDuration("GITHUB_HTTP_TIMEOUT", 10*time.Second),
+		GitHubCacheTTL:          getEnvDuration("GITHUB_CACHE_TTL", 5*time.Minute),
+		GitHubFetchLockTTL:      getEnvDuration("GITHUB_FETCH_LOCK_TTL", 30*time.Second),
+		GitHubRateLimitRetryMax: getEnvDuration("GITHUB_RATE_LIMIT_RETRY_MAX", 15*time.Minute),
+		LogLevel:                getEnv("LOG_LEVEL", "info"),
 	}
 
 	if cfg.DatabaseURL == "" {

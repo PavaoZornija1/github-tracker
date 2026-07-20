@@ -12,6 +12,7 @@ import (
 
 	"github.com/PavaoZornija1/github-tracker/internal/cache"
 	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
+	"github.com/PavaoZornija1/github-tracker/internal/ratelimit"
 )
 
 type countingFetcher struct {
@@ -119,6 +120,73 @@ func TestInvalidateForcesRefetch(t *testing.T) {
 	}
 	if fetcher.calls.Load() != 2 {
 		t.Fatalf("calls after invalidate = %d, want 2", fetcher.calls.Load())
+	}
+}
+
+func TestGateCoolDownSkipsUpstream(t *testing.T) {
+	fetcher := &countingFetcher{
+		repo: &githubclient.Repo{
+			Owner:    "golang",
+			Name:     "go",
+			FullName: "golang/go",
+			HTMLURL:  "https://github.com/golang/go",
+		},
+	}
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	gate := ratelimit.NewGitHubGate(rdb)
+	until := time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339Nano)
+	if err := rdb.Set(context.Background(), ratelimit.KeyUntil, until, time.Hour).Err(); err != nil {
+		t.Fatalf("set until: %v", err)
+	}
+
+	c := cache.NewGitHubCache(rdb, fetcher, cache.GitHubCacheOptions{
+		TTL:  time.Minute,
+		Gate: gate,
+	})
+	_, err = c.Get(context.Background(), "golang", "go")
+	ge, ok := githubclient.As(err)
+	if !ok || ge.Kind != githubclient.KindRateLimited {
+		t.Fatalf("Get = %v, want KindRateLimited", err)
+	}
+	if fetcher.calls.Load() != 0 {
+		t.Fatalf("upstream calls = %d, want 0", fetcher.calls.Load())
+	}
+}
+
+func TestConcurrentGetsDuringCoolDownNoUpstream(t *testing.T) {
+	fetcher := &countingFetcher{
+		repo: &githubclient.Repo{Owner: "o", Name: "n", FullName: "o/n", HTMLURL: "https://github.com/o/n"},
+	}
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	gate := ratelimit.NewGitHubGate(rdb)
+	_ = rdb.Set(context.Background(), ratelimit.KeyUntil,
+		time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano), time.Hour).Err()
+
+	c := cache.NewGitHubCache(rdb, fetcher, cache.GitHubCacheOptions{Gate: gate})
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = c.Get(context.Background(), "o", "n")
+		}()
+	}
+	wg.Wait()
+	if fetcher.calls.Load() != 0 {
+		t.Fatalf("upstream calls = %d, want 0", fetcher.calls.Load())
 	}
 }
 

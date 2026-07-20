@@ -71,7 +71,7 @@ curl -s 'localhost:8080/api/repos/changes?since=<next_cursor>&limit=20'
 |-------|--------|
 | HTTP | Gin |
 | ORM | Ent + PostgreSQL |
-| Cache / locks | Redis (**not** the job queue) |
+| Cache / locks | Redis (**not** the job queue; includes fleet GitHub rate gate) |
 | Job queue | RabbitMQ (+ TTL retry + DLQ) |
 | Errors | `{ "error": { "code", "message" } }` |
 | Docs | swaggo OpenAPI |
@@ -113,6 +113,14 @@ GitHub payloads live in Redis under `gh:repo:{owner}/{name}` with a **5-minute T
 - Unlock uses a random token + **Lua compare-and-del** so a late unlock cannot delete a newer holder’s lock after TTL expiry.
 - Explicit `POST .../refresh` **invalidates** the cache key before re-fetching.
 - Safe across multiple app replicas because both the cache entry and the lock live in Redis, not in process memory.
+
+## Fleet GitHub rate budget
+
+Scale **API and worker** replicas freely. Per-process `WORKER_CONCURRENCY` still caps in-flight jobs on each worker; the **shared GitHub budget** lives in Redis (`github:rate_limit_*`):
+
+- Before every upstream fetch, the cache consults a fleet gate (cool-down + remaining/reset).
+- Every GitHub response updates the gate from rate-limit headers.
+- Workers park on the TTL retry queue (up to `GITHUB_RATE_LIMIT_RETRY_MAX`, default 15m) without burning retry budget on 429s.
 
 ## Delivery & idempotency
 

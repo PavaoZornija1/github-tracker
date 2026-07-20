@@ -96,6 +96,11 @@ func rateLimited(msg string, retryAfter time.Duration, remaining int) *Error {
 	}
 }
 
+// NewRateLimited builds a rate-limit error for pre-flight gates and tests.
+func NewRateLimited(msg string, retryAfter time.Duration) *Error {
+	return rateLimited(msg, retryAfter, 0)
+}
+
 func serverError(status int, msg string) *Error {
 	return &Error{Kind: KindServer, StatusCode: status, Message: msg}
 }

@@ -34,6 +34,21 @@ func TestDefaultBackoffHonorsRetryAfter(t *testing.T) {
 	}
 }
 
+func TestClampRetryExpirationAllowsLongRateLimitDelay(t *testing.T) {
+	got := queue.ClampRetryExpiration(5*time.Minute, 15*time.Minute)
+	if got != 5*time.Minute {
+		t.Fatalf("got %v, want 5m (old 60s cap would truncate)", got)
+	}
+	got = queue.ClampRetryExpiration(20*time.Minute, 15*time.Minute)
+	if got != 15*time.Minute {
+		t.Fatalf("got %v, want max 15m", got)
+	}
+	got = queue.ClampRetryExpiration(time.Minute, 0)
+	if got != time.Minute {
+		t.Fatalf("default max: got %v, want 1m", got)
+	}
+}
+
 func TestBatchKickRoundTrip(t *testing.T) {
 	kick := queue.BatchKick{BatchID: uuid.New()}
 	b, err := kick.Marshal()
