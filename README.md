@@ -31,11 +31,13 @@ Design and plan:
 
 ```bash
 cp .env.example .env
-docker compose up -d          # postgres, redis, rabbitmq
+docker compose up -d          # postgres (host :5433), redis, rabbitmq
 set -a && source .env && set +a
 make run-api                  # terminal 1
 make run-worker               # terminal 2
 ```
+
+Postgres is mapped to **host port 5433** so it does not clash with a local Postgres on 5432. Containers still talk on internal `postgres:5432`.
 
 ### Full stack in Compose
 
