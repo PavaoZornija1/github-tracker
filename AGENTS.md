@@ -10,11 +10,13 @@ Read `docs/superpowers/specs/2026-07-19-github-tracker-design.md` before large c
 
 **Default for non-trivial tasks:** Research → Worker → Review.
 
-- Skill: `.cursor/skills/research-worker-review/SKILL.md`
+- Skill: `.cursor/skills/research-worker-review/SKILL.md` (Research starts from `docs/superpowers/specs/2026-07-19-github-tracker-design.md`)
+- Live / interview edits: `.cursor/skills/micro-rwr/SKILL.md` (plan → test → implement → invariant checklist)
 - Human explainer: `docs/workflows/research-worker-review.md`
+- PR checklist: `.github/pull_request_template.md` (mirrors Validate below)
 - Personal Cursor skill (all repos): `research-worker-review`
 
-Trivial one-liners can be inline. Anything touching invariants below gets the three lanes.
+Trivial one-liners can be inline. Anything touching invariants below gets micro-RWR at minimum; multi-step work gets the three lanes.
 
 ## Stack
 

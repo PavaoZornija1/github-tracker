@@ -5,10 +5,12 @@ alwaysApply: true
 
 # Agentic delivery
 
-For multi-step or production-sensitive changes, run **Research → Worker → Review** (see `.cursor/skills/research-worker-review/SKILL.md` and `docs/workflows/research-worker-review.md`).
+For multi-step or production-sensitive changes, run **Research → Worker → Review** (see `.cursor/skills/research-worker-review/SKILL.md` and `docs/workflows/research-worker-review.md`). Research must start from `docs/superpowers/specs/2026-07-19-github-tracker-design.md`.
+
+For live / interview / time-boxed edits that still touch invariants, use **micro-RWR** (`.cursor/skills/micro-rwr/SKILL.md`): plan → test → implement → invariant checklist.
 
 - Research is read-only and returns a plan + acceptance checks
 - Worker implements that plan with small commits and tests
 - Review is adversarial; fix Critical/Important before calling the task done
 
-Do not skip Review for concurrency, queue, cache, shutdown, or auth-adjacent changes.
+Do not skip Review for concurrency, queue, cache, shutdown, or auth-adjacent changes (micro-RWR still requires the invariant checklist).

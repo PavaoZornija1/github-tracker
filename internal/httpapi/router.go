@@ -46,6 +46,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		api.POST("/repos/:id/refresh", h.Refresh)
 	}
 
+	r.GET("/", Root)
 	r.GET("/healthz", Healthz)
 	r.GET("/readyz", Readyz(deps.Ready))
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))

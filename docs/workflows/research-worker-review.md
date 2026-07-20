@@ -44,14 +44,31 @@ Orchestrator:
 | Artifact | Role |
 |----------|------|
 | `~/.cursor/skills/research-worker-review/SKILL.md` | Personal skill (all projects) |
-| `.cursor/skills/research-worker-review/SKILL.md` | Project skill (this repo) |
+| `.cursor/skills/research-worker-review/SKILL.md` | Project skill (this repo); Research starts from the design spec |
+| `.cursor/skills/micro-rwr/SKILL.md` | Compressed live-change loop: plan → test → implement → invariant checklist |
+| `.github/pull_request_template.md` | PR checklist mirroring `AGENTS.md` Validate section |
 | `AGENTS.md` | Short pointer + repo invariants |
 | This file | Human teaching / onboarding |
 
+## Micro-RWR (live / interview)
+
+Same roles, shorter ceremony. Use when blast radius is small but invariants still matter:
+
+1. Read design + name the invariant at risk  
+2. Write/extend a focused test  
+3. Implement the smallest diff  
+4. Tick the applicable validate checklist  
+
+Full three-lane still required for topology, new endpoints, or anything you would not want to demo unreviewed.
+
 ## Trigger phrases
 
-Agents should apply this when you say things like:
+Agents should apply **full RWR** when you say things like:
 
 - “same flow”  
 - “research, worker, review”  
 - “three-lane” / “agentic best practice”
+
+Agents should apply **micro-RWR** when you say:
+
+- “micro-RWR” / “live change” / “interview change”

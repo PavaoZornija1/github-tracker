@@ -8,7 +8,8 @@ GitHub repo tracker API + worker: **Gin, Ent, Postgres, Redis (cache only), Rabb
 
 ## Agentic default
 
-**Research → Worker → Review** for non-trivial work.  
+**Research → Worker → Review** for non-trivial work (Research starts from the design spec).  
+Live edits: `.cursor/skills/micro-rwr/SKILL.md`.  
 See `.cursor/skills/research-worker-review/SKILL.md` and `docs/workflows/research-worker-review.md`.
 
 ## Non-negotiables

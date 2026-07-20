@@ -15,6 +15,7 @@ make compose-up-full          # docker compose --profile full up -d --build
 
 | URL | Purpose |
 |-----|---------|
+| http://localhost:8080/ | Service index (links + endpoint list) |
 | http://localhost:8080/swagger/index.html | OpenAPI UI |
 | http://localhost:8080/healthz | Liveness |
 | http://localhost:8080/readyz | Readiness (Postgres + Redis) |
@@ -94,18 +95,28 @@ curl -s 'localhost:8080/api/repos/changes?since=<next_cursor>&limit=20'
 
 | Choice | Why | Cost |
 |--------|-----|------|
-| RabbitMQ vs Redis queue | Durable jobs must not share eviction with disposable cache | Extra Compose service |
+| RabbitMQ vs Redis Streams / asynq | Durable jobs + native DLX/TTL retry must not share eviction, memory pressure, or ops fate with the disposable GitHub cache | Extra Compose service |
 | Two binaries (`api` / `worker`) | Scale and shut down independently; shared `internal/` | Two processes |
 | Cursor pagination | Stable under concurrent writes; same keyset as `/changes` | No offset pages |
 | Job rows in DB for batches | Source of truth for status + idempotent worker updates | Extra table |
 | Batch kick + fan-out | One durable kick after job rows; redelivery recovers partial fan-out | Extra message type |
 | At-least-once delivery | Manual ack after terminal DB state; TTL retry queue | Handlers must be idempotent |
 
+## Redis cache (multi-replica)
+
+GitHub payloads live in Redis under `gh:repo:{owner}/{name}` with a **5-minute TTL**. Concurrent cache misses use a distributed lock (`gh:lock:{owner}/{name}`, `SET NX` + short expiry) so **exactly one** upstream GitHub call happens across API replicas.
+
+- Waiters poll the cache; when the holder writes the payload and releases the lock, peers read Redis instead of calling GitHub again.
+- If the lock holder dies mid-fetch, the lock TTL expires and another replica may acquire it (holder-died recovery).
+- Unlock uses a random token + **Lua compare-and-del** so a late unlock cannot delete a newer holder’s lock after TTL expiry.
+- Explicit `POST .../refresh` **invalidates** the cache key before re-fetching.
+- Safe across multiple app replicas because both the cache entry and the lock live in Redis, not in process memory.
+
 ## Delivery & idempotency
 
 - Refresh jobs are **at-least-once**. Conditional status updates on `refresh_batch_jobs` (`pending` → `succeeded` / `failed`); a second delivery of a terminal job is a no-op.
 - Concurrent `POST /api/repos` for the same `full_name` returns a clean **409**.
-- Worker concurrency is capped at **5**. On shutdown, in-flight messages are nacked/redelivered.
+- Worker concurrency is capped at **5**. On shutdown, in-flight messages are nacked/redelivered (or finished then acked if already past the shutdown gate); unacked prefetch is redelivered when the channel closes.
 
 ## Pagination & `/changes`
 
@@ -119,3 +130,5 @@ Non-trivial work uses **Research → Worker → Review**:
 
 - [docs/workflows/research-worker-review.md](docs/workflows/research-worker-review.md)
 - [AGENTS.md](AGENTS.md)
+- Live / interview: [`.cursor/skills/micro-rwr/SKILL.md`](.cursor/skills/micro-rwr/SKILL.md)
+- PR validate checklist: [`.github/pull_request_template.md`](.github/pull_request_template.md)
