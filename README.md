@@ -41,12 +41,13 @@ curl -s -X POST localhost:8080/api/repos \
   -H 'content-type: application/json' \
   -d '{"owner":"gin-gonic","name":"gin"}'
 
-# List / get / patch notes
+# List / get / patch notes / delete
 curl -s 'localhost:8080/api/repos?limit=20&sort=stars_desc'
 curl -s localhost:8080/api/repos/<repo_id>
 curl -s -X PATCH localhost:8080/api/repos/<repo_id> \
   -H 'content-type: application/json' \
   -d '{"notes":"interesting"}'
+curl -s -X DELETE localhost:8080/api/repos/<repo_id>
 
 # Single-repo refresh (sync)
 curl -s -X POST localhost:8080/api/repos/<repo_id>/refresh
@@ -70,8 +71,9 @@ curl -s 'localhost:8080/api/repos/changes?since=<next_cursor>&limit=20'
 |-------|--------|
 | HTTP | Gin |
 | ORM | Ent + PostgreSQL |
-| Cache / locks | Redis |
+| Cache / locks | Redis (**not** the job queue) |
 | Job queue | RabbitMQ (+ TTL retry + DLQ) |
+| Errors | `{ "error": { "code", "message" } }` |
 | Docs | swaggo OpenAPI |
 | Metrics | Prometheus `/metrics` |
 
@@ -126,9 +128,10 @@ GitHub payloads live in Redis under `gh:repo:{owner}/{name}` with a **5-minute T
 
 ## AI workflow
 
-Non-trivial work uses **Research → Worker → Review**:
+Non-trivial work uses **Research → Worker → Review**; live edits use **micro-RWR**:
 
 - [docs/workflows/research-worker-review.md](docs/workflows/research-worker-review.md)
 - [AGENTS.md](AGENTS.md)
+- Full skill: [`.cursor/skills/research-worker-review/SKILL.md`](.cursor/skills/research-worker-review/SKILL.md)
 - Live / interview: [`.cursor/skills/micro-rwr/SKILL.md`](.cursor/skills/micro-rwr/SKILL.md)
 - PR validate checklist: [`.github/pull_request_template.md`](.github/pull_request_template.md)

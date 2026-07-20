@@ -64,13 +64,12 @@ Before accepting generated code, re-read:
 ## Commands
 
 ```bash
-docker compose up -d                 # infra
-docker compose --profile full up -d --build   # + api + worker
 cp .env.example .env
-make run-api
-make run-worker
+make compose-up-full   # Postgres + Redis + RabbitMQ + api + worker
+make compose-down
 make test
 make swag
+# Optional host binaries (infra must already be up): make run-api / make run-worker
 ```
 
 Probes: `/healthz` (liveness), `/readyz` (Postgres + Redis), `/metrics` (Prometheus).
