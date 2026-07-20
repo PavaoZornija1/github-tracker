@@ -35,4 +35,18 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.GitHubCacheTTL != 5*time.Minute {
 		t.Fatalf("GitHubCacheTTL = %v, want 5m", cfg.GitHubCacheTTL)
 	}
+	if !cfg.AutoMigrate() {
+		t.Fatal("default APP_ENV should auto-migrate")
+	}
+}
+
+func TestAutoMigrateProductionDisabled(t *testing.T) {
+	cfg := config.Config{AppEnv: "production"}
+	if cfg.AutoMigrate() {
+		t.Fatal("production must not auto-migrate")
+	}
+	cfg.AppEnv = "development"
+	if !cfg.AutoMigrate() {
+		t.Fatal("development should auto-migrate")
+	}
 }

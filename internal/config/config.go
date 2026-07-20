@@ -9,6 +9,7 @@ import (
 
 // Config holds runtime configuration loaded from environment variables.
 type Config struct {
+	AppEnv   string
 	HTTPAddr string
 
 	DatabaseURL string
@@ -24,34 +25,46 @@ type Config struct {
 	WorkerConcurrency int
 	WorkerMaxRetries  int
 
-	GitHubToken         string
-	GitHubAPIBaseURL    string
-	GitHubHTTPTimeout   time.Duration
-	GitHubCacheTTL      time.Duration
-	GitHubFetchLockTTL  time.Duration
+	GitHubToken        string
+	GitHubAPIBaseURL   string
+	GitHubHTTPTimeout  time.Duration
+	GitHubCacheTTL     time.Duration
+	GitHubFetchLockTTL time.Duration
 
 	LogLevel string
+}
+
+// AutoMigrate reports whether Ent Schema.Create should run on startup.
+// Enabled for empty/development/local/test; disabled for production.
+func (c Config) AutoMigrate() bool {
+	switch c.AppEnv {
+	case "", "development", "local", "test", "dev":
+		return true
+	default:
+		return false
+	}
 }
 
 // Load reads configuration from the process environment.
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPAddr:            getEnv("HTTP_ADDR", ":8080"),
-		DatabaseURL:         os.Getenv("DATABASE_URL"),
-		RedisURL:            getEnv("REDIS_URL", "redis://localhost:6379/0"),
-		RabbitMQURL:         getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
-		RabbitMQQueue:       getEnv("RABBITMQ_QUEUE", "repo.refresh"),
-		RabbitMQDLQ:         getEnv("RABBITMQ_DLQ", "repo.refresh.dlq"),
-		RabbitMQExchange:    getEnv("RABBITMQ_EXCHANGE", "repo.jobs"),
-		RabbitMQDLX:         getEnv("RABBITMQ_DLX", "repo.jobs.dlx"),
-		WorkerConcurrency:   getEnvInt("WORKER_CONCURRENCY", 5),
-		WorkerMaxRetries:    getEnvInt("WORKER_MAX_RETRIES", 3),
-		GitHubToken:         os.Getenv("GITHUB_TOKEN"),
-		GitHubAPIBaseURL:    getEnv("GITHUB_API_BASE_URL", "https://api.github.com"),
-		GitHubHTTPTimeout:   getEnvDuration("GITHUB_HTTP_TIMEOUT", 10*time.Second),
-		GitHubCacheTTL:      getEnvDuration("GITHUB_CACHE_TTL", 5*time.Minute),
-		GitHubFetchLockTTL:  getEnvDuration("GITHUB_FETCH_LOCK_TTL", 30*time.Second),
-		LogLevel:            getEnv("LOG_LEVEL", "info"),
+		AppEnv:             getEnv("APP_ENV", "development"),
+		HTTPAddr:           getEnv("HTTP_ADDR", ":8080"),
+		DatabaseURL:        os.Getenv("DATABASE_URL"),
+		RedisURL:           getEnv("REDIS_URL", "redis://localhost:6379/0"),
+		RabbitMQURL:        getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+		RabbitMQQueue:      getEnv("RABBITMQ_QUEUE", "repo.refresh"),
+		RabbitMQDLQ:        getEnv("RABBITMQ_DLQ", "repo.refresh.dlq"),
+		RabbitMQExchange:   getEnv("RABBITMQ_EXCHANGE", "repo.jobs"),
+		RabbitMQDLX:        getEnv("RABBITMQ_DLX", "repo.jobs.dlx"),
+		WorkerConcurrency:  getEnvInt("WORKER_CONCURRENCY", 5),
+		WorkerMaxRetries:   getEnvInt("WORKER_MAX_RETRIES", 3),
+		GitHubToken:        os.Getenv("GITHUB_TOKEN"),
+		GitHubAPIBaseURL:   getEnv("GITHUB_API_BASE_URL", "https://api.github.com"),
+		GitHubHTTPTimeout:  getEnvDuration("GITHUB_HTTP_TIMEOUT", 10*time.Second),
+		GitHubCacheTTL:     getEnvDuration("GITHUB_CACHE_TTL", 5*time.Minute),
+		GitHubFetchLockTTL: getEnvDuration("GITHUB_FETCH_LOCK_TTL", 30*time.Second),
+		LogLevel:           getEnv("LOG_LEVEL", "info"),
 	}
 
 	if cfg.DatabaseURL == "" {
