@@ -248,3 +248,114 @@ func TestGetBatchStatusUnknownBatch(t *testing.T) {
 		t.Fatalf("err = %v, want not_found", err)
 	}
 }
+
+func TestProcessRefreshJob_RateLimitDoesNotExhaustBudget(t *testing.T) {
+	client := enttest.Open(t, "sqlite3", "file:batchratelimit?mode=memory&cache=shared&_fk=1")
+	defer client.Close()
+
+	repo, err := client.Repository.Create().
+		SetOwner("golang").
+		SetName("go").
+		SetFullName("golang/go").
+		SetHTMLURL("https://github.com/golang/go").
+		SetFetchedAt(time.Now().UTC()).
+		Save(context.Background())
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	batch, err := client.RefreshBatch.Create().Save(context.Background())
+	if err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
+	jobID := uuid.New()
+	_, err = client.RefreshBatchJob.Create().
+		SetID(jobID).
+		SetBatchID(batch.ID).
+		SetRepoID(repo.ID).
+		SetStatus(schema.RefreshJobStatusPending).
+		Save(context.Background())
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	gh := &refreshGitHub{err: &githubclient.Error{
+		Kind:       githubclient.KindRateLimited,
+		StatusCode: 429,
+		Message:    "rate limited",
+		RetryAfter: time.Second,
+	}}
+	batches := service.NewBatchService(client, service.NewRepoService(client, gh), &memPublisher{}, nil, 3)
+	job := queue.RefreshJob{JobID: jobID, BatchID: batch.ID, RepoID: repo.ID}
+
+	err = batches.ProcessRefreshJob(context.Background(), job, 3)
+	var te *queue.TransientError
+	if !queue.AsTransient(err, &te) {
+		t.Fatalf("err = %v, want TransientError", err)
+	}
+	if te.CountAsAttempt {
+		t.Fatal("rate-limit transient must not count as attempt")
+	}
+
+	row, err := client.RefreshBatchJob.Get(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if row.Status != schema.RefreshJobStatusPending {
+		t.Fatalf("status = %v, want pending (not failed at maxRetries)", row.Status)
+	}
+}
+
+func TestProcessRefreshJob_ServerExhaustsBudget(t *testing.T) {
+	client := enttest.Open(t, "sqlite3", "file:batchserver?mode=memory&cache=shared&_fk=1")
+	defer client.Close()
+
+	repo, err := client.Repository.Create().
+		SetOwner("golang").
+		SetName("go").
+		SetFullName("golang/go").
+		SetHTMLURL("https://github.com/golang/go").
+		SetFetchedAt(time.Now().UTC()).
+		Save(context.Background())
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	batch, err := client.RefreshBatch.Create().Save(context.Background())
+	if err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
+	jobID := uuid.New()
+	_, err = client.RefreshBatchJob.Create().
+		SetID(jobID).
+		SetBatchID(batch.ID).
+		SetRepoID(repo.ID).
+		SetStatus(schema.RefreshJobStatusPending).
+		Save(context.Background())
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	gh := &refreshGitHub{err: &githubclient.Error{
+		Kind:       githubclient.KindServer,
+		StatusCode: 500,
+		Message:    "boom",
+	}}
+	batches := service.NewBatchService(client, service.NewRepoService(client, gh), &memPublisher{}, nil, 3)
+	job := queue.RefreshJob{JobID: jobID, BatchID: batch.ID, RepoID: repo.ID}
+
+	err = batches.ProcessRefreshJob(context.Background(), job, 3)
+	if err == nil {
+		t.Fatal("expected permanent error after maxRetries")
+	}
+	var te *queue.TransientError
+	if queue.AsTransient(err, &te) {
+		t.Fatal("expected non-transient permanent failure")
+	}
+
+	row, err := client.RefreshBatchJob.Get(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if row.Status != schema.RefreshJobStatusFailed {
+		t.Fatalf("status = %v, want failed", row.Status)
+	}
+}

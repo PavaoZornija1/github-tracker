@@ -181,10 +181,13 @@ func (s *BatchService) ProcessRefreshJob(ctx context.Context, job queue.RefreshJ
 
 	if ge, ok := githubclient.As(err); ok {
 		switch ge.Kind {
-		case githubclient.KindRateLimited, githubclient.KindServer, githubclient.KindNetwork:
-			if ge.Kind == githubclient.KindRateLimited && ge.RetryAfter > 0 && s.rdb != nil {
+		case githubclient.KindRateLimited:
+			if ge.RetryAfter > 0 && s.rdb != nil {
 				_ = s.rdb.Set(ctx, githubRateLimitKey, time.Now().Add(ge.RetryAfter).UTC().Format(time.RFC3339Nano), ge.RetryAfter).Err()
 			}
+			// Rate limits never burn the retry budget; only 5xx/network do.
+			return queue.NewRateLimited(err, ge.RetryAfter)
+		case githubclient.KindServer, githubclient.KindNetwork:
 			if attempt >= s.maxRetries {
 				reason := ge.Error()
 				if markErr := s.markFailed(ctx, job.JobID, reason); markErr != nil {
@@ -273,5 +276,5 @@ func (s *BatchService) waitOutRateLimit(ctx context.Context) error {
 	if delay <= 0 {
 		return nil
 	}
-	return queue.NewTransient(fmt.Errorf("backing off github rate limit"), delay)
+	return queue.NewRateLimited(fmt.Errorf("backing off github rate limit"), delay)
 }
