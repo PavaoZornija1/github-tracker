@@ -64,3 +64,27 @@ func (h *BatchHandler) GetBatch(c *gin.Context) {
 	}
 	WriteJSON(c, http.StatusOK, status)
 }
+
+// EnqueueBatch re-publishes a batch kick so pending jobs can be fanned out again.
+// @Summary Re-enqueue batch kick
+// @Description Repair path when kick publish failed after job rows were created.
+// @Tags batches
+// @Produce json
+// @Param id path string true "Batch ID" format(uuid)
+// @Success 202 {object} map[string]string
+// @Failure 400 {object} apierror.Envelope
+// @Failure 404 {object} apierror.Envelope
+// @Failure 503 {object} apierror.Envelope
+// @Router /batches/{id}/enqueue [post]
+func (h *BatchHandler) EnqueueBatch(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		WriteError(c, h.logger, apierror.Validation("invalid batch id"))
+		return
+	}
+	if err := h.svc.EnqueueBatch(c.Request.Context(), id); err != nil {
+		WriteError(c, h.logger, err)
+		return
+	}
+	WriteJSON(c, http.StatusAccepted, gin.H{"batch_id": id.String()})
+}

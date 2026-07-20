@@ -39,6 +39,10 @@ func (nopPublisher) PublishRefresh(ctx context.Context, job queue.RefreshJob) er
 	return nil
 }
 
+func (nopPublisher) PublishBatchKick(ctx context.Context, kick queue.BatchKick) error {
+	return nil
+}
+
 func TestConcurrentPOSTCreateConflict(t *testing.T) {
 	client := enttest.Open(t, "sqlite3", "file:httpconcurrent?mode=memory&cache=shared&_fk=1")
 	defer client.Close()

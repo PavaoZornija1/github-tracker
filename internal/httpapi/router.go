@@ -32,13 +32,14 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		api.GET("/repos/stats", h.Stats)
 		api.GET("/repos/changes", h.Changes)
 		api.POST("/repos/refresh-all", bh.RefreshAll)
+		api.GET("/batches/:id", bh.GetBatch)
+		api.POST("/batches/:id/enqueue", bh.EnqueueBatch)
 		api.GET("/repos", h.List)
 		api.POST("/repos", h.Create)
 		api.GET("/repos/:id", h.Get)
 		api.PATCH("/repos/:id", h.Patch)
 		api.DELETE("/repos/:id", h.Delete)
 		api.POST("/repos/:id/refresh", h.Refresh)
-		api.GET("/batches/:id", bh.GetBatch)
 	}
 
 	r.GET("/healthz", func(c *gin.Context) {
