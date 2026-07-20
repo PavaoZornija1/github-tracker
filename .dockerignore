@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+*.md
+docs/superpowers
+.cursor
+.claude
+bin
+tmp
+*.test
