@@ -38,12 +38,13 @@ func (m *mockAcknowledger) Reject(tag uint64, requeue bool) error {
 }
 
 type mockDeadLetterPublisher struct {
-	mu         sync.Mutex
-	dlqCalls   int
-	dlqErr     error
-	repCalls   int
-	repErr     error
+	mu          sync.Mutex
+	dlqCalls    int
+	dlqErr      error
+	retryCalls  int
+	retryErr    error
 	lastAttempt int
+	lastExp     time.Duration
 }
 
 func (m *mockDeadLetterPublisher) PublishDeadLetter(ctx context.Context, job RefreshJob, reason string, attempt int) error {
@@ -54,12 +55,28 @@ func (m *mockDeadLetterPublisher) PublishDeadLetter(ctx context.Context, job Ref
 	return m.dlqErr
 }
 
-func (m *mockDeadLetterPublisher) RepublishRefresh(ctx context.Context, job RefreshJob, attempt int) error {
+func (m *mockDeadLetterPublisher) PublishRetry(ctx context.Context, job RefreshJob, attempt int, expiration time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.repCalls++
+	m.retryCalls++
 	m.lastAttempt = attempt
-	return m.repErr
+	m.lastExp = expiration
+	return m.retryErr
+}
+
+func testConsumer(pub deliveryPublisher, handler Handler) *Consumer {
+	return &Consumer{
+		client:     &Client{cfg: Config{Queue: "repo.refresh"}},
+		maxRetries: 3,
+		publisher:  pub,
+		handler:    handler,
+		backoff: func(attempt int, retryAfter time.Duration) time.Duration {
+			if retryAfter > 0 {
+				return retryAfter
+			}
+			return time.Millisecond
+		},
+	}
 }
 
 func TestHandleDelivery_DLQPublishFailureNacks(t *testing.T) {
@@ -71,14 +88,9 @@ func TestHandleDelivery_DLQPublishFailureNacks(t *testing.T) {
 
 	ack := &mockAcknowledger{}
 	pub := &mockDeadLetterPublisher{dlqErr: errors.New("dlq unavailable")}
-	c := &Consumer{
-		maxRetries: 3,
-		publisher:  pub,
-		handler: func(ctx context.Context, job RefreshJob, attempt int) error {
-			return Permanent("not found")
-		},
-		backoff: DefaultBackoff,
-	}
+	c := testConsumer(pub, func(ctx context.Context, job RefreshJob, attempt int) error {
+		return Permanent("not found")
+	})
 
 	d := amqp.Delivery{
 		Acknowledger: ack,
@@ -115,14 +127,9 @@ func TestHandleDelivery_DLQPublishSuccessAcks(t *testing.T) {
 
 	ack := &mockAcknowledger{}
 	pub := &mockDeadLetterPublisher{}
-	c := &Consumer{
-		maxRetries: 3,
-		publisher:  pub,
-		handler: func(ctx context.Context, job RefreshJob, attempt int) error {
-			return Permanent("not found")
-		},
-		backoff: DefaultBackoff,
-	}
+	c := testConsumer(pub, func(ctx context.Context, job RefreshJob, attempt int) error {
+		return Permanent("not found")
+	})
 
 	d := amqp.Delivery{
 		Acknowledger: ack,
@@ -151,16 +158,9 @@ func TestHandleDelivery_RateLimitKeepsSameAttempt(t *testing.T) {
 
 	ack := &mockAcknowledger{}
 	pub := &mockDeadLetterPublisher{}
-	c := &Consumer{
-		maxRetries: 3,
-		publisher:  pub,
-		handler: func(ctx context.Context, job RefreshJob, attempt int) error {
-			return NewRateLimited(errors.New("rate limited"), time.Millisecond)
-		},
-		backoff: func(attempt int, retryAfter time.Duration) time.Duration {
-			return time.Millisecond
-		},
-	}
+	c := testConsumer(pub, func(ctx context.Context, job RefreshJob, attempt int) error {
+		return NewRateLimited(errors.New("rate limited"), 50*time.Millisecond)
+	})
 
 	d := amqp.Delivery{
 		Acknowledger: ack,
@@ -183,10 +183,81 @@ func TestHandleDelivery_RateLimitKeepsSameAttempt(t *testing.T) {
 	if pub.dlqCalls != 0 {
 		t.Fatalf("dlq calls = %d, want 0", pub.dlqCalls)
 	}
-	if pub.repCalls != 1 {
-		t.Fatalf("republish calls = %d, want 1", pub.repCalls)
+	if pub.retryCalls != 1 {
+		t.Fatalf("retry calls = %d, want 1", pub.retryCalls)
 	}
 	if pub.lastAttempt != 3 {
-		t.Fatalf("republish attempt = %d, want 3 (unchanged)", pub.lastAttempt)
+		t.Fatalf("retry attempt = %d, want 3 (unchanged)", pub.lastAttempt)
+	}
+}
+
+func TestHandleDelivery_TransientRoutesToRetryWithoutSleep(t *testing.T) {
+	job := RefreshJob{JobID: uuid.New(), BatchID: uuid.New(), RepoID: uuid.New()}
+	body, err := job.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	ack := &mockAcknowledger{}
+	pub := &mockDeadLetterPublisher{}
+	started := time.Now()
+	c := testConsumer(pub, func(ctx context.Context, job RefreshJob, attempt int) error {
+		return NewTransient(errors.New("server error"), 0)
+	})
+
+	d := amqp.Delivery{
+		Acknowledger: ack,
+		DeliveryTag:  1,
+		Body:         body,
+		Headers:      amqp.Table{HeaderAttempt: int32(1)},
+	}
+	c.handleDelivery(context.Background(), context.Background(), d)
+	if time.Since(started) > 200*time.Millisecond {
+		t.Fatal("handleDelivery slept; expected immediate retry publish")
+	}
+
+	ack.mu.Lock()
+	defer ack.mu.Unlock()
+	if ack.acks != 1 {
+		t.Fatalf("acks = %d, want 1", ack.acks)
+	}
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if pub.retryCalls != 1 {
+		t.Fatalf("retry calls = %d, want 1", pub.retryCalls)
+	}
+	if pub.lastAttempt != 2 {
+		t.Fatalf("retry attempt = %d, want 2", pub.lastAttempt)
+	}
+}
+
+func TestHandleDelivery_RetryPublishFailureNacks(t *testing.T) {
+	job := RefreshJob{JobID: uuid.New(), BatchID: uuid.New(), RepoID: uuid.New()}
+	body, err := job.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	ack := &mockAcknowledger{}
+	pub := &mockDeadLetterPublisher{retryErr: errors.New("retry unavailable")}
+	c := testConsumer(pub, func(ctx context.Context, job RefreshJob, attempt int) error {
+		return NewTransient(errors.New("network"), 0)
+	})
+
+	d := amqp.Delivery{
+		Acknowledger: ack,
+		DeliveryTag:  1,
+		Body:         body,
+		Headers:      amqp.Table{HeaderAttempt: int32(1)},
+	}
+	c.handleDelivery(context.Background(), context.Background(), d)
+
+	ack.mu.Lock()
+	defer ack.mu.Unlock()
+	if ack.acks != 0 {
+		t.Fatalf("acks = %d, want 0", ack.acks)
+	}
+	if ack.nacks != 1 || !ack.requeue {
+		t.Fatalf("nacks=%d requeue=%v, want nack requeue", ack.nacks, ack.requeue)
 	}
 }

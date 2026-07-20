@@ -8,7 +8,11 @@ alwaysApply: false
 
 - Redis is not the queue — jobs go through RabbitMQ
 - Manual ack only after DB reflects terminal job state (or safe retry path)
-- Max 5 jobs in flight; max 3 attempts on transient failures with backoff + jitter
+- Never ack if DLQ publish failed — Nack(requeue) instead
+- Max 5 jobs in flight; transient failures go to `{queue}.retry` with per-message TTL (no in-process sleep holding the slot)
+- Rate-limit waits use `CountAsAttempt=false` and must not burn `WORKER_MAX_RETRIES`
 - Permanent failures → DLQ with reason; update batch job row accordingly
 - Idempotent processing: duplicate delivery must not double-count batch success/failure
+- Refresh-all uses batch kick + fan-out; kick redelivery recovers mid-loop publish failure
+- Publisher confirms on enqueue paths
 - SIGTERM: stop consuming, finish or requeue in-flight, no lost messages

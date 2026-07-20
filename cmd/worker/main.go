@@ -31,7 +31,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	entClient, err := db.OpenPostgres(ctx, cfg.DatabaseURL)
+	entClient, err := db.OpenPostgres(ctx, cfg.DatabaseURL, db.OpenOptions{AutoMigrate: cfg.AutoMigrate()})
 	if err != nil {
 		logger.Error("open database", "err", err)
 		os.Exit(1)
@@ -95,6 +95,7 @@ func main() {
 		"concurrency", cfg.WorkerConcurrency,
 		"max_retries", cfg.WorkerMaxRetries,
 		"queue", cfg.RabbitMQQueue,
+		"retry_queue", queue.RetryQueueName(cfg.RabbitMQQueue),
 		"dlq", cfg.RabbitMQDLQ,
 	)
 

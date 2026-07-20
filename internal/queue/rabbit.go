@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 // retry and dead-letter paths (injected for unit tests).
 type deliveryPublisher interface {
 	PublishDeadLetter(ctx context.Context, job RefreshJob, reason string, attempt int) error
-	RepublishRefresh(ctx context.Context, job RefreshJob, attempt int) error
+	PublishRetry(ctx context.Context, job RefreshJob, attempt int, expiration time.Duration) error
 }
 
 // Config holds RabbitMQ topology names.
@@ -24,6 +25,11 @@ type Config struct {
 	Queue    string
 	DLX      string
 	DLQ      string
+}
+
+// RetryQueueName derives the TTL retry queue from the main work queue.
+func RetryQueueName(queue string) string {
+	return queue + ".retry"
 }
 
 // Client owns the AMQP connection and declared topology.
@@ -60,6 +66,19 @@ func (c *Client) declare(ch *amqp.Channel) error {
 	if err := ch.ExchangeDeclare(c.cfg.DLX, "direct", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare dlx: %w", err)
 	}
+
+	retryQueue := RetryQueueName(c.cfg.Queue)
+	retryArgs := amqp.Table{
+		"x-dead-letter-exchange":    c.cfg.Exchange,
+		"x-dead-letter-routing-key": RoutingKeyRefresh,
+	}
+	if _, err := ch.QueueDeclare(retryQueue, true, false, false, false, retryArgs); err != nil {
+		return fmt.Errorf("declare retry queue: %w", err)
+	}
+	if err := ch.QueueBind(retryQueue, RoutingKeyRetry, c.cfg.Exchange, false, nil); err != nil {
+		return fmt.Errorf("bind retry queue: %w", err)
+	}
+
 	if _, err := ch.QueueDeclare(c.cfg.Queue, true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare queue: %w", err)
 	}
@@ -90,18 +109,80 @@ func (c *Client) Close() error {
 	return err
 }
 
-// Publisher publishes refresh jobs to the main exchange.
+const publishConfirmTimeout = 5 * time.Second
+
+// Publisher publishes refresh jobs to the main exchange with publisher confirms.
+// A single AMQP channel is reused under mu (channels are not concurrent-safe).
 type Publisher struct {
-	client *Client
+	client   *Client
+	mu       sync.Mutex
+	ch       *amqp.Channel
+	confirms <-chan amqp.Confirmation
 }
 
 func NewPublisher(client *Client) *Publisher {
 	return &Publisher{client: client}
 }
 
+func (p *Publisher) ensureChannel() error {
+	if p.ch != nil && !p.ch.IsClosed() {
+		return nil
+	}
+	ch, err := p.client.conn.Channel()
+	if err != nil {
+		return fmt.Errorf("channel: %w", err)
+	}
+	if err := ch.Confirm(false); err != nil {
+		_ = ch.Close()
+		return fmt.Errorf("confirm mode: %w", err)
+	}
+	p.ch = ch
+	p.confirms = ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+	return nil
+}
+
+func (p *Publisher) publishConfirmed(ctx context.Context, exchange, key string, msg amqp.Publishing) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.ensureChannel(); err != nil {
+		return err
+	}
+	if err := p.ch.PublishWithContext(ctx, exchange, key, false, false, msg); err != nil {
+		_ = p.ch.Close()
+		p.ch = nil
+		return err
+	}
+
+	timeout := publishConfirmTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
+			timeout = remaining
+		}
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("publish confirm timeout after %s", timeout)
+	case conf, ok := <-p.confirms:
+		if !ok {
+			p.ch = nil
+			return fmt.Errorf("confirm channel closed")
+		}
+		if !conf.Ack {
+			return fmt.Errorf("publish nacked by broker")
+		}
+		return nil
+	}
+}
+
 // PublishRefresh enqueues one refresh job (attempt starts at 1).
 func (p *Publisher) PublishRefresh(ctx context.Context, job RefreshJob) error {
-	return p.publishRefresh(ctx, p.client.cfg.Exchange, RoutingKeyRefresh, job, 1)
+	return p.publishRefresh(ctx, p.client.cfg.Exchange, RoutingKeyRefresh, job, 1, "")
 }
 
 // PublishBatchKick enqueues a fan-out kick for a refresh batch.
@@ -110,13 +191,7 @@ func (p *Publisher) PublishBatchKick(ctx context.Context, kick BatchKick) error 
 	if err != nil {
 		return err
 	}
-	ch, err := p.client.conn.Channel()
-	if err != nil {
-		return fmt.Errorf("channel: %w", err)
-	}
-	defer ch.Close()
-
-	return ch.PublishWithContext(ctx, p.client.cfg.Exchange, RoutingKeyBatchKick, false, false, amqp.Publishing{
+	return p.publishConfirmed(ctx, p.client.cfg.Exchange, RoutingKeyBatchKick, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now().UTC(),
@@ -125,21 +200,16 @@ func (p *Publisher) PublishBatchKick(ctx context.Context, kick BatchKick) error 
 	})
 }
 
-func (p *Publisher) publishRefresh(ctx context.Context, exchange, key string, job RefreshJob, attempt int) error {
+func (p *Publisher) publishRefresh(ctx context.Context, exchange, key string, job RefreshJob, attempt int, expiration string) error {
 	body, err := job.Marshal()
 	if err != nil {
 		return err
 	}
-	ch, err := p.client.conn.Channel()
-	if err != nil {
-		return fmt.Errorf("channel: %w", err)
-	}
-	defer ch.Close()
-
-	return ch.PublishWithContext(ctx, exchange, key, false, false, amqp.Publishing{
+	return p.publishConfirmed(ctx, exchange, key, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now().UTC(),
+		Expiration:   expiration,
 		Headers: amqp.Table{
 			HeaderAttempt:     int32(attempt),
 			HeaderMessageType: MessageTypeRefresh,
@@ -154,27 +224,30 @@ func (p *Publisher) PublishDeadLetter(ctx context.Context, job RefreshJob, reaso
 	if err != nil {
 		return err
 	}
-	ch, err := p.client.conn.Channel()
-	if err != nil {
-		return fmt.Errorf("channel: %w", err)
-	}
-	defer ch.Close()
-
-	return ch.PublishWithContext(ctx, p.client.cfg.DLX, "dead", false, false, amqp.Publishing{
+	return p.publishConfirmed(ctx, p.client.cfg.DLX, "dead", amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now().UTC(),
 		Headers: amqp.Table{
-			HeaderAttempt: int32(attempt),
-			"x-reason":    reason,
+			HeaderAttempt:     int32(attempt),
+			HeaderMessageType: MessageTypeRefresh,
+			"x-reason":        reason,
 		},
 		Body: body,
 	})
 }
 
-// RepublishRefresh re-queues a job after a transient failure with an incremented attempt.
-func (p *Publisher) RepublishRefresh(ctx context.Context, job RefreshJob, attempt int) error {
-	return p.publishRefresh(ctx, p.client.cfg.Exchange, RoutingKeyRefresh, job, attempt)
+// PublishRetry parks a transient failure on the TTL retry queue until expiration,
+// then dead-letters back to the main refresh routing key.
+func (p *Publisher) PublishRetry(ctx context.Context, job RefreshJob, attempt int, expiration time.Duration) error {
+	if expiration < time.Millisecond {
+		expiration = time.Millisecond
+	}
+	if expiration > 60*time.Second {
+		expiration = 60 * time.Second
+	}
+	ms := strconv.FormatInt(expiration.Milliseconds(), 10)
+	return p.publishRefresh(ctx, p.client.cfg.Exchange, RoutingKeyRetry, job, attempt, ms)
 }
 
 // Handler processes one refresh delivery. attempt is 1-based from message headers.
@@ -267,13 +340,17 @@ func (c *Consumer) Run(ctx context.Context) error {
 }
 
 func (c *Consumer) handleDelivery(jobCtx, shutdownCtx context.Context, d amqp.Delivery) {
+	if err := shutdownCtx.Err(); err != nil {
+		_ = d.Nack(false, true)
+		return
+	}
 	switch messageType(d.Headers) {
 	case MessageTypeBatchKick:
 		c.handleKickDelivery(jobCtx, d)
 	case MessageTypeRefresh:
-		c.handleRefreshDelivery(jobCtx, shutdownCtx, d)
+		c.handleRefreshDelivery(jobCtx, d)
 	default:
-		c.handleRefreshDelivery(jobCtx, shutdownCtx, d)
+		c.handleRefreshDelivery(jobCtx, d)
 	}
 }
 
@@ -301,7 +378,7 @@ func (c *Consumer) handleKickDelivery(jobCtx context.Context, d amqp.Delivery) {
 	c.deadLetterOrNack(jobCtx, d, RefreshJob{BatchID: kick.BatchID}, err.Error(), 1)
 }
 
-func (c *Consumer) handleRefreshDelivery(jobCtx, shutdownCtx context.Context, d amqp.Delivery) {
+func (c *Consumer) handleRefreshDelivery(jobCtx context.Context, d amqp.Delivery) {
 	job, err := UnmarshalRefreshJob(d.Body)
 	if err != nil {
 		c.deadLetterOrNack(jobCtx, d, RefreshJob{}, "invalid_payload", 1)
@@ -317,24 +394,26 @@ func (c *Consumer) handleRefreshDelivery(jobCtx, shutdownCtx context.Context, d 
 
 	var transient *TransientError
 	if AsTransient(err, &transient) {
-		if transient.CountAsAttempt && attempt >= c.maxRetries {
-			c.deadLetterOrNack(jobCtx, d, job, transient.Error(), attempt)
-			return
+		deathCount := xDeathCount(d.Headers, c.client.cfg.Queue)
+		effectiveAttempt := attempt
+		if deathCount > effectiveAttempt {
+			effectiveAttempt = deathCount
 		}
-		delay := c.backoff(attempt, transient.RetryAfter)
-		timer := time.NewTimer(delay)
-		select {
-		case <-shutdownCtx.Done():
-			timer.Stop()
-			_ = d.Nack(false, true)
+		if transient.CountAsAttempt && effectiveAttempt >= c.maxRetries {
+			c.deadLetterOrNack(jobCtx, d, job, transient.Error(), effectiveAttempt)
 			return
-		case <-timer.C:
 		}
 		nextAttempt := attempt
 		if transient.CountAsAttempt {
 			nextAttempt = attempt + 1
 		}
-		if pubErr := c.publisher.RepublishRefresh(jobCtx, job, nextAttempt); pubErr != nil {
+		delay := c.backoff(attempt, transient.RetryAfter)
+		if pubErr := c.publisher.PublishRetry(jobCtx, job, nextAttempt, delay); pubErr != nil {
+			slog.Error("retry publish failed; nacking for requeue",
+				"err", pubErr,
+				"job_id", job.JobID,
+				"attempt", attempt,
+			)
 			_ = d.Nack(false, true)
 			return
 		}
@@ -343,21 +422,6 @@ func (c *Consumer) handleRefreshDelivery(jobCtx, shutdownCtx context.Context, d 
 	}
 
 	c.deadLetterOrNack(jobCtx, d, job, err.Error(), attempt)
-}
-
-func messageType(h amqp.Table) string {
-	if h == nil {
-		return MessageTypeRefresh
-	}
-	v, ok := h[HeaderMessageType]
-	if !ok {
-		return MessageTypeRefresh
-	}
-	s, ok := v.(string)
-	if !ok || s == "" {
-		return MessageTypeRefresh
-	}
-	return s
 }
 
 // deadLetterOrNack publishes to the DLQ then Acks; on publish failure Nacks with requeue.
@@ -373,6 +437,21 @@ func (c *Consumer) deadLetterOrNack(ctx context.Context, d amqp.Delivery, job Re
 		return
 	}
 	_ = d.Ack(false)
+}
+
+func messageType(h amqp.Table) string {
+	if h == nil {
+		return MessageTypeRefresh
+	}
+	v, ok := h[HeaderMessageType]
+	if !ok {
+		return MessageTypeRefresh
+	}
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return MessageTypeRefresh
+	}
+	return s
 }
 
 func headerAttempt(h amqp.Table) int {
@@ -398,4 +477,39 @@ func headerAttempt(h amqp.Table) int {
 		}
 	}
 	return 1
+}
+
+// xDeathCount sums counts from x-death entries for the given queue name.
+func xDeathCount(h amqp.Table, queue string) int {
+	if h == nil {
+		return 0
+	}
+	raw, ok := h["x-death"]
+	if !ok {
+		return 0
+	}
+	entries, ok := raw.([]interface{})
+	if !ok {
+		return 0
+	}
+	total := 0
+	for _, e := range entries {
+		table, ok := e.(amqp.Table)
+		if !ok {
+			continue
+		}
+		q, _ := table["queue"].(string)
+		if q != queue {
+			continue
+		}
+		switch n := table["count"].(type) {
+		case int64:
+			total += int(n)
+		case int32:
+			total += int(n)
+		case int:
+			total += n
+		}
+	}
+	return total
 }
