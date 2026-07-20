@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-20  
 **Scope:** Full codebase audit against assignment invariants + industry practice (Go/Gin, RabbitMQ, Redis locks, Ent migrations)  
-**Status:** Documentation only — no P0 code fixes in this change
+**Status:** P0–P2 backlog items implemented (2026-07-20) — see commits on `main` / implementation plan `docs/superpowers/plans/2026-07-20-retrospective-improvements.md`
 
 ---
 

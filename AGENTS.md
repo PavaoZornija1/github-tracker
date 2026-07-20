@@ -62,10 +62,17 @@ Before accepting generated code, re-read:
 ## Commands
 
 ```bash
-docker compose up -d
+docker compose up -d                 # infra
+docker compose --profile full up -d --build   # + api + worker
 cp .env.example .env
 make run-api
 make run-worker
 make test
 make swag
 ```
+
+Probes: `/healthz` (liveness), `/readyz` (Postgres + Redis), `/metrics` (Prometheus).
+
+Migrations: `APP_ENV=production` skips Ent `Schema.Create`; see `migrations/README.md` (Atlas follow-up).
+
+DLQ replay: `docs/runbooks/dlq-replay.md`.
