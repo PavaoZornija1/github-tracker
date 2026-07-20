@@ -1,19 +1,23 @@
-.PHONY: help compose-up compose-down run-api run-worker test generate swag tidy fmt
+.PHONY: help compose-up compose-up-full compose-down run-api run-worker test generate swag tidy fmt
 
 help:
 	@echo "Targets:"
-	@echo "  compose-up    Start Postgres, Redis, RabbitMQ"
-	@echo "  compose-down  Stop Compose stack"
-	@echo "  run-api       Run API binary (requires DATABASE_URL)"
-	@echo "  run-worker    Run worker binary"
-	@echo "  test          Run unit tests"
-	@echo "  generate      Regenerate Ent client"
-	@echo "  swag          Regenerate OpenAPI docs (docs/docs.go + swagger.{json,yaml})"
-	@echo "  tidy          go mod tidy"
-	@echo "  fmt           go fmt ./..."
+	@echo "  compose-up       Start Postgres, Redis, RabbitMQ (infra)"
+	@echo "  compose-up-full  Build and start infra + api + worker"
+	@echo "  compose-down     Stop Compose stack"
+	@echo "  run-api          Run API binary (requires DATABASE_URL)"
+	@echo "  run-worker       Run worker binary"
+	@echo "  test             Run unit tests"
+	@echo "  generate         Regenerate Ent client"
+	@echo "  swag             Regenerate OpenAPI docs (docs/docs.go + swagger.{json,yaml})"
+	@echo "  tidy             go mod tidy"
+	@echo "  fmt              go fmt ./..."
 
 compose-up:
 	docker compose up -d
+
+compose-up-full:
+	docker compose --profile full up -d --build
 
 compose-down:
 	docker compose down
