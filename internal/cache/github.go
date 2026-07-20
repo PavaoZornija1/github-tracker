@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -10,6 +12,15 @@ import (
 
 	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
 )
+
+// compare-and-del: only the lock holder may release.
+var releaseLockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+else
+  return 0
+end
+`)
 
 // RepoFetcher fetches a repository from an upstream (typically GitHub).
 type RepoFetcher interface {
@@ -63,6 +74,14 @@ func lockKey(owner, name string) string {
 	return fmt.Sprintf("gh:lock:%s/%s", owner, name)
 }
 
+func newLockToken() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
 // Get returns a cached repo or fetches via single-flight lock so concurrent
 // misses across replicas perform exactly one upstream call.
 //
@@ -78,20 +97,24 @@ func (c *GitHubCache) Get(ctx context.Context, owner, name string) (*githubclien
 			return repo, nil
 		}
 
-		acquired, err := c.rdb.SetNX(ctx, lockKey(owner, name), "1", c.lockTTL).Result()
+		token, err := newLockToken()
+		if err != nil {
+			return nil, fmt.Errorf("lock token: %w", err)
+		}
+		acquired, err := c.rdb.SetNX(ctx, lockKey(owner, name), token, c.lockTTL).Result()
 		if err != nil {
 			return nil, fmt.Errorf("acquire fetch lock: %w", err)
 		}
 		if acquired {
 			// Another replica may have populated the cache between our miss and lock win.
 			if repo, ok, err := c.getCached(ctx, owner, name); err != nil {
-				_ = c.rdb.Del(ctx, lockKey(owner, name)).Err()
+				_ = c.releaseLock(ctx, owner, name, token)
 				return nil, err
 			} else if ok {
-				_ = c.rdb.Del(ctx, lockKey(owner, name)).Err()
+				_ = c.releaseLock(ctx, owner, name, token)
 				return repo, nil
 			}
-			return c.fetchAndCache(ctx, owner, name)
+			return c.fetchAndCache(ctx, owner, name, token)
 		}
 
 		timer := time.NewTimer(c.waitTick)
@@ -124,9 +147,9 @@ func (c *GitHubCache) getCached(ctx context.Context, owner, name string) (*githu
 	return &repo, true, nil
 }
 
-func (c *GitHubCache) fetchAndCache(ctx context.Context, owner, name string) (*githubclient.Repo, error) {
+func (c *GitHubCache) fetchAndCache(ctx context.Context, owner, name, token string) (*githubclient.Repo, error) {
 	defer func() {
-		_ = c.rdb.Del(ctx, lockKey(owner, name)).Err()
+		_ = c.releaseLock(ctx, owner, name, token)
 	}()
 
 	repo, err := c.fetcher.GetRepo(ctx, owner, name)
@@ -141,4 +164,8 @@ func (c *GitHubCache) fetchAndCache(ctx context.Context, owner, name string) (*g
 		return nil, fmt.Errorf("redis set: %w", err)
 	}
 	return repo, nil
+}
+
+func (c *GitHubCache) releaseLock(ctx context.Context, owner, name, token string) error {
+	return releaseLockScript.Run(ctx, c.rdb, []string{lockKey(owner, name)}, token).Err()
 }
