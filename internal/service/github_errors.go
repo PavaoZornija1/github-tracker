@@ -3,6 +3,7 @@ package service
 import (
 	"github.com/PavaoZornija1/github-tracker/internal/apierror"
 	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
+	"github.com/PavaoZornija1/github-tracker/internal/metrics"
 )
 
 // MapGitHubError converts typed GitHub failures into API errors.
@@ -11,6 +12,7 @@ func MapGitHubError(err error) error {
 	if !ok {
 		return err
 	}
+	metrics.IncGitHubError(githubErrorKindLabel(ge.Kind))
 	switch ge.Kind {
 	case githubclient.KindNotFound:
 		return apierror.NotFound("github repository not found")
@@ -24,5 +26,22 @@ func MapGitHubError(err error) error {
 		return apierror.Unavailable("github unreachable")
 	default:
 		return apierror.BadGateway("github request failed")
+	}
+}
+
+func githubErrorKindLabel(k githubclient.Kind) string {
+	switch k {
+	case githubclient.KindNotFound:
+		return "not_found"
+	case githubclient.KindUnauthorized:
+		return "unauthorized"
+	case githubclient.KindRateLimited:
+		return "rate_limited"
+	case githubclient.KindServer:
+		return "server"
+	case githubclient.KindNetwork:
+		return "network"
+	default:
+		return "unknown"
 	}
 }

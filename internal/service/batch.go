@@ -14,6 +14,7 @@ import (
 	"github.com/PavaoZornija1/github-tracker/internal/ent/refreshbatch"
 	"github.com/PavaoZornija1/github-tracker/internal/ent/refreshbatchjob"
 	"github.com/PavaoZornija1/github-tracker/internal/githubclient"
+	"github.com/PavaoZornija1/github-tracker/internal/metrics"
 	"github.com/PavaoZornija1/github-tracker/internal/queue"
 )
 
@@ -209,6 +210,7 @@ func (s *BatchService) ProcessRefreshJob(ctx context.Context, job queue.RefreshJ
 	}
 
 	if ge, ok := githubclient.As(err); ok {
+		metrics.IncGitHubError(githubErrorKindLabel(ge.Kind))
 		switch ge.Kind {
 		case githubclient.KindRateLimited:
 			if ge.RetryAfter > 0 && s.rdb != nil {
