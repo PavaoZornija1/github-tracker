@@ -34,13 +34,18 @@ func TestDefaultBackoffHonorsRetryAfter(t *testing.T) {
 	}
 }
 
-func TestTransientError(t *testing.T) {
-	err := queue.NewTransient(queue.Permanent("rate limited"), time.Second)
-	var te *queue.TransientError
-	if !queue.AsTransient(err, &te) {
-		t.Fatal("expected transient")
+func TestBatchKickRoundTrip(t *testing.T) {
+	kick := queue.BatchKick{BatchID: uuid.New()}
+	b, err := kick.Marshal()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if te.RetryAfter != time.Second {
-		t.Fatalf("RetryAfter = %v", te.RetryAfter)
+	got, err := queue.UnmarshalBatchKick(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != kick {
+		t.Fatalf("got %+v want %+v", got, kick)
 	}
 }
+

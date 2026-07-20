@@ -67,7 +67,10 @@ func (c *Client) declare(ch *amqp.Channel) error {
 		return fmt.Errorf("declare dlq: %w", err)
 	}
 	if err := ch.QueueBind(c.cfg.Queue, RoutingKeyRefresh, c.cfg.Exchange, false, nil); err != nil {
-		return fmt.Errorf("bind queue: %w", err)
+		return fmt.Errorf("bind refresh: %w", err)
+	}
+	if err := ch.QueueBind(c.cfg.Queue, RoutingKeyBatchKick, c.cfg.Exchange, false, nil); err != nil {
+		return fmt.Errorf("bind batch kick: %w", err)
 	}
 	if err := ch.QueueBind(c.cfg.DLQ, "dead", c.cfg.DLX, false, nil); err != nil {
 		return fmt.Errorf("bind dlq: %w", err)
@@ -98,10 +101,31 @@ func NewPublisher(client *Client) *Publisher {
 
 // PublishRefresh enqueues one refresh job (attempt starts at 1).
 func (p *Publisher) PublishRefresh(ctx context.Context, job RefreshJob) error {
-	return p.publish(ctx, p.client.cfg.Exchange, RoutingKeyRefresh, job, 1)
+	return p.publishRefresh(ctx, p.client.cfg.Exchange, RoutingKeyRefresh, job, 1)
 }
 
-func (p *Publisher) publish(ctx context.Context, exchange, key string, job RefreshJob, attempt int) error {
+// PublishBatchKick enqueues a fan-out kick for a refresh batch.
+func (p *Publisher) PublishBatchKick(ctx context.Context, kick BatchKick) error {
+	body, err := kick.Marshal()
+	if err != nil {
+		return err
+	}
+	ch, err := p.client.conn.Channel()
+	if err != nil {
+		return fmt.Errorf("channel: %w", err)
+	}
+	defer ch.Close()
+
+	return ch.PublishWithContext(ctx, p.client.cfg.Exchange, RoutingKeyBatchKick, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		Timestamp:    time.Now().UTC(),
+		Headers:      amqp.Table{HeaderMessageType: MessageTypeBatchKick},
+		Body:         body,
+	})
+}
+
+func (p *Publisher) publishRefresh(ctx context.Context, exchange, key string, job RefreshJob, attempt int) error {
 	body, err := job.Marshal()
 	if err != nil {
 		return err
@@ -116,8 +140,11 @@ func (p *Publisher) publish(ctx context.Context, exchange, key string, job Refre
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now().UTC(),
-		Headers:      amqp.Table{HeaderAttempt: int32(attempt)},
-		Body:         body,
+		Headers: amqp.Table{
+			HeaderAttempt:     int32(attempt),
+			HeaderMessageType: MessageTypeRefresh,
+		},
+		Body: body,
 	})
 }
 
@@ -147,11 +174,14 @@ func (p *Publisher) PublishDeadLetter(ctx context.Context, job RefreshJob, reaso
 
 // RepublishRefresh re-queues a job after a transient failure with an incremented attempt.
 func (p *Publisher) RepublishRefresh(ctx context.Context, job RefreshJob, attempt int) error {
-	return p.publish(ctx, p.client.cfg.Exchange, RoutingKeyRefresh, job, attempt)
+	return p.publishRefresh(ctx, p.client.cfg.Exchange, RoutingKeyRefresh, job, attempt)
 }
 
-// Handler processes one delivery. attempt is 1-based from message headers.
+// Handler processes one refresh delivery. attempt is 1-based from message headers.
 type Handler func(ctx context.Context, job RefreshJob, attempt int) error
+
+// KickHandler fans out pending refresh jobs for a batch kick message.
+type KickHandler func(ctx context.Context, kick BatchKick) error
 
 // Consumer pulls jobs with bounded prefetch and manual ack.
 type Consumer struct {
@@ -160,6 +190,7 @@ type Consumer struct {
 	maxRetries  int
 	publisher   deliveryPublisher
 	handler     Handler
+	kickHandler KickHandler
 	backoff     func(attempt int, retryAfter time.Duration) time.Duration
 }
 
@@ -168,6 +199,7 @@ type ConsumerOptions struct {
 	Concurrency int
 	MaxRetries  int
 	Handler     Handler
+	KickHandler KickHandler
 	Backoff     func(attempt int, retryAfter time.Duration) time.Duration
 }
 
@@ -186,6 +218,7 @@ func NewConsumer(client *Client, opts ConsumerOptions) *Consumer {
 		maxRetries:  opts.MaxRetries,
 		publisher:   NewPublisher(client),
 		handler:     opts.Handler,
+		kickHandler: opts.KickHandler,
 		backoff:     backoff,
 	}
 }
@@ -234,6 +267,41 @@ func (c *Consumer) Run(ctx context.Context) error {
 }
 
 func (c *Consumer) handleDelivery(jobCtx, shutdownCtx context.Context, d amqp.Delivery) {
+	switch messageType(d.Headers) {
+	case MessageTypeBatchKick:
+		c.handleKickDelivery(jobCtx, d)
+	case MessageTypeRefresh:
+		c.handleRefreshDelivery(jobCtx, shutdownCtx, d)
+	default:
+		c.handleRefreshDelivery(jobCtx, shutdownCtx, d)
+	}
+}
+
+func (c *Consumer) handleKickDelivery(jobCtx context.Context, d amqp.Delivery) {
+	kick, err := UnmarshalBatchKick(d.Body)
+	if err != nil {
+		c.deadLetterOrNack(jobCtx, d, RefreshJob{}, "invalid_kick_payload", 1)
+		return
+	}
+	if c.kickHandler == nil {
+		c.deadLetterOrNack(jobCtx, d, RefreshJob{}, "kick_handler_not_configured", 1)
+		return
+	}
+	err = c.kickHandler(jobCtx, kick)
+	if err == nil {
+		_ = d.Ack(false)
+		return
+	}
+	var transient *TransientError
+	if AsTransient(err, &transient) {
+		// Kick redelivery recovers mid-loop fan-out; keep original on queue.
+		_ = d.Nack(false, true)
+		return
+	}
+	c.deadLetterOrNack(jobCtx, d, RefreshJob{BatchID: kick.BatchID}, err.Error(), 1)
+}
+
+func (c *Consumer) handleRefreshDelivery(jobCtx, shutdownCtx context.Context, d amqp.Delivery) {
 	job, err := UnmarshalRefreshJob(d.Body)
 	if err != nil {
 		c.deadLetterOrNack(jobCtx, d, RefreshJob{}, "invalid_payload", 1)
@@ -275,6 +343,21 @@ func (c *Consumer) handleDelivery(jobCtx, shutdownCtx context.Context, d amqp.De
 	}
 
 	c.deadLetterOrNack(jobCtx, d, job, err.Error(), attempt)
+}
+
+func messageType(h amqp.Table) string {
+	if h == nil {
+		return MessageTypeRefresh
+	}
+	v, ok := h[HeaderMessageType]
+	if !ok {
+		return MessageTypeRefresh
+	}
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return MessageTypeRefresh
+	}
+	return s
 }
 
 // deadLetterOrNack publishes to the DLQ then Acks; on publish failure Nacks with requeue.
