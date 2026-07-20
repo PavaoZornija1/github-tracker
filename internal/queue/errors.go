@@ -9,8 +9,9 @@ import (
 
 // TransientError signals a retryable processing failure.
 type TransientError struct {
-	Err        error
-	RetryAfter time.Duration
+	Err            error
+	RetryAfter     time.Duration
+	CountAsAttempt bool // when false (rate-limit), republish keeps the same attempt
 }
 
 func (e *TransientError) Error() string {
@@ -23,8 +24,14 @@ func (e *TransientError) Error() string {
 func (e *TransientError) Unwrap() error { return e.Err }
 
 // NewTransient wraps err as retryable, optionally honoring Retry-After.
+// Counts toward the worker retry budget by default.
 func NewTransient(err error, retryAfter time.Duration) error {
-	return &TransientError{Err: err, RetryAfter: retryAfter}
+	return &TransientError{Err: err, RetryAfter: retryAfter, CountAsAttempt: true}
+}
+
+// NewRateLimited wraps a rate-limit / cool-down wait that must not burn retries.
+func NewRateLimited(err error, retryAfter time.Duration) error {
+	return &TransientError{Err: err, RetryAfter: retryAfter, CountAsAttempt: false}
 }
 
 // AsTransient extracts *TransientError from err's chain.

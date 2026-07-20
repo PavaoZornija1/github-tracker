@@ -3,11 +3,19 @@ package queue
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
+
+// deliveryPublisher is the subset of Publisher used by the consumer for
+// retry and dead-letter paths (injected for unit tests).
+type deliveryPublisher interface {
+	PublishDeadLetter(ctx context.Context, job RefreshJob, reason string, attempt int) error
+	RepublishRefresh(ctx context.Context, job RefreshJob, attempt int) error
+}
 
 // Config holds RabbitMQ topology names.
 type Config struct {
@@ -150,7 +158,7 @@ type Consumer struct {
 	client      *Client
 	concurrency int
 	maxRetries  int
-	publisher   *Publisher
+	publisher   deliveryPublisher
 	handler     Handler
 	backoff     func(attempt int, retryAfter time.Duration) time.Duration
 }
@@ -228,7 +236,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 func (c *Consumer) handleDelivery(jobCtx, shutdownCtx context.Context, d amqp.Delivery) {
 	job, err := UnmarshalRefreshJob(d.Body)
 	if err != nil {
-		_ = d.Ack(false)
+		c.deadLetterOrNack(jobCtx, d, RefreshJob{}, "invalid_payload", 1)
 		return
 	}
 
@@ -241,9 +249,8 @@ func (c *Consumer) handleDelivery(jobCtx, shutdownCtx context.Context, d amqp.De
 
 	var transient *TransientError
 	if AsTransient(err, &transient) {
-		if attempt >= c.maxRetries {
-			_ = c.publisher.PublishDeadLetter(jobCtx, job, transient.Error(), attempt)
-			_ = d.Ack(false)
+		if transient.CountAsAttempt && attempt >= c.maxRetries {
+			c.deadLetterOrNack(jobCtx, d, job, transient.Error(), attempt)
 			return
 		}
 		delay := c.backoff(attempt, transient.RetryAfter)
@@ -255,7 +262,11 @@ func (c *Consumer) handleDelivery(jobCtx, shutdownCtx context.Context, d amqp.De
 			return
 		case <-timer.C:
 		}
-		if pubErr := c.publisher.RepublishRefresh(jobCtx, job, attempt+1); pubErr != nil {
+		nextAttempt := attempt
+		if transient.CountAsAttempt {
+			nextAttempt = attempt + 1
+		}
+		if pubErr := c.publisher.RepublishRefresh(jobCtx, job, nextAttempt); pubErr != nil {
 			_ = d.Nack(false, true)
 			return
 		}
@@ -263,7 +274,21 @@ func (c *Consumer) handleDelivery(jobCtx, shutdownCtx context.Context, d amqp.De
 		return
 	}
 
-	_ = c.publisher.PublishDeadLetter(jobCtx, job, err.Error(), attempt)
+	c.deadLetterOrNack(jobCtx, d, job, err.Error(), attempt)
+}
+
+// deadLetterOrNack publishes to the DLQ then Acks; on publish failure Nacks with requeue.
+func (c *Consumer) deadLetterOrNack(ctx context.Context, d amqp.Delivery, job RefreshJob, reason string, attempt int) {
+	if err := c.publisher.PublishDeadLetter(ctx, job, reason, attempt); err != nil {
+		slog.Error("dead-letter publish failed; nacking for requeue",
+			"err", err,
+			"job_id", job.JobID,
+			"attempt", attempt,
+			"reason", reason,
+		)
+		_ = d.Nack(false, true)
+		return
+	}
 	_ = d.Ack(false)
 }
 
